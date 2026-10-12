@@ -100,7 +100,7 @@
   App.garageOpenAlert = function () {
     App.setDevice('g-door', { state: 'open' });
     App.banner({
-      icon: 'garage', title: 'Garage open for 15 min', sub: 'No one is in the garage · Wes is 12 min away',
+      icon: 'garage', title: 'Garage open for 15 min', sub: 'No one is in the garage · ' + App.person('alex').name + ' is 12 min away',
       action: 'Close garage', dismiss: 'Leave open',
       onAction: function () { App.openGarageSheet(); }
     });

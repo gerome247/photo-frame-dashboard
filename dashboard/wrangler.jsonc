@@ -1,8 +1,12 @@
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "home-dashboard",
+  "main": "src/worker.js",
   "compatibility_date": "2026-09-30",
   "assets": {
-    "directory": "./dist"
+    "directory": "./dist",
+    "binding": "ASSETS",
+    // Every request goes through src/worker.js first, so the key check covers all files.
+    "run_worker_first": true
   }
 }

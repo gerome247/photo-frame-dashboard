@@ -13,14 +13,23 @@ KS="$HOME/.android/debug.keystore"
 
 rm -rf build && mkdir -p build/gen build/classes
 
+# Kiosk start URL: url from ../local.config.json plus ?key= from ../.dash-key (both gitignored),
+# written to a generated class so neither ends up in the source tree.
+URL=$(node -p "try { require('../local.config.json').url || '' } catch { '' }" 2>/dev/null || true)
+URL=${URL:-https://home-dashboard.wesbos.workers.dev/}
+if [ -f ../.dash-key ]; then URL="$URL?key=$(tr -d '\n' < ../.dash-key)"; fi
+mkdir -p build/gen/com/wesbos/homehq
+printf 'package com.wesbos.homehq;\n\nfinal class Config {\n  static final String DEFAULT_URL = "%s";\n}\n' "$URL" \
+  > build/gen/com/wesbos/homehq/Config.java
+
 "$BT/aapt2" compile --dir res -o build/res.zip
 "$BT/aapt2" link -o build/base.apk -I "$JAR" --manifest AndroidManifest.xml build/res.zip \
-  --java build/gen --min-sdk-version 23 --target-sdk-version 23 --version-code 1 --version-name 1.0
+  --java build/gen --min-sdk-version 22 --target-sdk-version 23 --version-code 1 --version-name 1.0
 
 javac -nowarn -source 8 -target 8 -classpath "$JAR" -d build/classes \
-  src/com/wesbos/homehq/*.java build/gen/com/wesbos/homehq/R.java 2>&1 | grep -v "^warning\|^Note\|bootstrap" || true
+  src/com/wesbos/homehq/*.java build/gen/com/wesbos/homehq/*.java 2>&1 | grep -v "^warning\|^Note\|bootstrap" || true
 
-"$BT/d8" --min-api 23 --lib "$JAR" --output build $(find build/classes -name '*.class')
+"$BT/d8" --min-api 22 --lib "$JAR" --output build $(find build/classes -name '*.class')
 (cd build && zip -qj base.apk classes.dex)
 "$BT/zipalign" -f 4 build/base.apk build/aligned.apk
 

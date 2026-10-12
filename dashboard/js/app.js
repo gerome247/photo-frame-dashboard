@@ -151,8 +151,9 @@
   App.hourly = function (count) {
     var W = D.weather, h = App.now().getHours(), out = [];
     for (var i = 0; i < count; i++) {
-      var x = (h + i) % 24;
-      out.push({ h: x, t: W.t[x], c: W.c[x], p: W.p[x], label: i === 0 ? 'Now' : ((x % 12 || 12) + (x >= 12 ? 'p' : 'a')) });
+      // Live weather has 48 hourly slots, so past midnight read tomorrow's; demo data (24) wraps.
+      var k = h + i < W.t.length ? h + i : (h + i) % 24, x = k % 24;
+      out.push({ h: x, t: W.t[k], c: W.c[k], p: W.p[k], label: i === 0 ? 'Now' : ((x % 12 || 12) + (x >= 12 ? 'p' : 'a')) });
     }
     return out;
   };
@@ -327,7 +328,7 @@
 
   // ------------------------------------------------------------ boot
   App.start = function () {
-    App.setTime(15, 18); // demo default: a busy weekday afternoon
+    App.setTime(); // real time (was the 3:18 PM demo default)
     fit();
     window.addEventListener('resize', fit);
     // Switch tabs the instant a finger lands (pointerdown), not on release. Keyboard "clicks"
@@ -349,5 +350,5 @@
     refreshStale(1500);
     setTimeout(function () { App.toast('Tip: press and hold the <b>clock</b> in the sidebar for demo controls', { ms: 6000, icon: 'bolt' }); }, 1200);
   };
-  document.addEventListener('DOMContentLoaded', function () { App.start(); });
+  // Started by main.js once live data and all views have loaded.
 })();

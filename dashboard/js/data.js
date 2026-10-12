@@ -26,6 +26,11 @@ window.DATA = (function () {
     { id: 'maya', name: 'Buzzsaw', age: 10, color: '#00A36C', rgb: '0 163 108', ink: '#FFFFFF', home: true, status: 'Home' },
     { id: 'otto', name: 'Skidmark', age: 6, color: '#FFB000', rgb: '255 176 0', ink: '#111111', home: true, status: 'Home' }
   ];
+  // Real names/ages come from the private local.config.json, injected at build time
+  // (vite.config.js -> __LOCAL_PEOPLE__), so they never land in the public repo.
+  var local = typeof __LOCAL_PEOPLE__ !== 'undefined' ? __LOCAL_PEOPLE__ : {};
+  people.forEach(function (p) { if (local[p.id]) Object.assign(p, local[p.id]); });
+  function first(id) { for (var i = 0; i < people.length; i++) if (people[i].id === id) return people[i].name; }
   var family = { id: 'family', name: 'Family', color: '#111111', rgb: '17 17 17', ink: '#FFFFFF' };
 
   // ---------------------------------------------------------------- calendar
@@ -234,8 +239,8 @@ window.DATA = (function () {
     { id: 'e-porch', room: 'entry', type: 'light', name: 'Porch', on: true, level: 100 },
     { id: 'g-door', room: 'entry', type: 'garage', name: 'Garage', state: 'closed' },
     { id: 'g-side', room: 'entry', type: 'lock', name: 'Side Door', locked: true },
-    { id: 'u-maya', room: 'upstairs', type: 'light', name: "Buzzsaw's Lamp", on: true, level: 30 },
-    { id: 'u-otto', room: 'upstairs', type: 'light', name: "Skidmark's Nightlight", on: false, level: 15 },
+    { id: 'u-maya', room: 'upstairs', type: 'light', name: first('maya') + "'s Lamp", on: true, level: 30 },
+    { id: 'u-otto', room: 'upstairs', type: 'light', name: first('otto') + "'s Nightlight", on: false, level: 15 },
     { id: 'u-hall', room: 'upstairs', type: 'light', name: 'Hallway', on: false, level: 60 },
     { id: 'u-bath', room: 'upstairs', type: 'light', name: 'Bathroom', on: false, level: 100 },
     { id: 'y-string', room: 'yard', type: 'light', name: 'String Lights', on: false, level: 100, flaky: true },

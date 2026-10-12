@@ -1,0 +1,10 @@
+{
+  "url": "https://home-dashboard.YOUR-SUBDOMAIN.workers.dev/",
+  "location": { "latitude": 51.5, "longitude": -0.12, "timezone": "Europe/London" },
+  "people": {
+    "alex": { "name": "Parent 1" },
+    "jordan": { "name": "Parent 2" },
+    "maya": { "name": "Kid 1", "age": 10 },
+    "otto": { "name": "Kid 2", "age": 8 }
+  }
+}
