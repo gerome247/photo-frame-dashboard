@@ -28,6 +28,10 @@ public class MainActivity extends Activity {
   static final String DEFAULT_URL = Config.DEFAULT_URL;
   static final long EXIT_HOLD_MS = 1500;
   static final float EXIT_SLOP_PX = 60;
+  static final long RETRY_MS = 10000;
+  // Shown instead of WebView's error page, which would print the URL (and its ?key=) on screen.
+  static final String OFFLINE_HTML = "<body style='margin:0;height:100vh;display:flex;align-items:center;"
+      + "justify-content:center;background:#f1ece4;color:#555;font:28px sans-serif'>Connecting\u2026</body>";
 
   private WebView web;
   private final Handler handler = new Handler(Looper.getMainLooper());
@@ -35,6 +39,15 @@ public class MainActivity extends Activity {
   private final float[] exitX = new float[2];
   private final float[] exitY = new float[2];
   private boolean exitArmed;
+  private String url;
+
+  // Retries the page after a failed load (e.g. at boot, before Wi-Fi is up).
+  private final Runnable retry = new Runnable() {
+    @Override
+    public void run() {
+      web.loadUrl(url);
+    }
+  };
 
   private final Runnable exitToLauncher = new Runnable() {
     @Override
@@ -62,19 +75,31 @@ public class MainActivity extends Activity {
     s.setDomStorageEnabled(true);
     s.setUseWideViewPort(true);
     s.setMediaPlaybackRequiresUserGesture(false);
-    web.setWebViewClient(new WebViewClient()); // keep navigation inside the kiosk
+    web.setWebViewClient(new WebViewClient() { // keep navigation inside the kiosk
+      @Override // the pre-API-23 signature: also called on the Fire tablet (API 22), main frame only
+      public void onReceivedError(WebView view, int code, String description, String failingUrl) {
+        Log.w(TAG, "Load failed (" + code + " " + description + "), retrying in " + RETRY_MS / 1000 + "s");
+        view.loadDataWithBaseURL(null, OFFLINE_HTML, "text/html", "utf-8", null);
+        handler.removeCallbacks(retry);
+        handler.postDelayed(retry, RETRY_MS);
+      }
+    });
     setContentView(web);
 
-    String url = getIntent().getDataString();
-    web.loadUrl(url != null ? url : DEFAULT_URL);
+    url = getIntent().getDataString();
+    if (url == null) url = DEFAULT_URL;
+    web.loadUrl(url);
   }
 
   @Override
   protected void onNewIntent(Intent intent) {
     super.onNewIntent(intent);
     applyDebugFlag(intent);
-    String url = intent.getDataString();
-    if (url != null) web.loadUrl(url);
+    if (intent.getDataString() != null) {
+      url = intent.getDataString();
+      handler.removeCallbacks(retry);
+      web.loadUrl(url);
+    }
   }
 
   /** Remote debugging only when explicitly requested; any normal launch turns it back off. */
