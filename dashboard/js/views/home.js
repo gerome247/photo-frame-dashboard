@@ -27,11 +27,16 @@
       }).join('') + '</div>';
   }
 
+  // Each person's chores today (stars for the kids). Wes's demo showed made-up locations/ETAs,
+  // which the dashboard can't know.
   function presence() {
     return D.people.map(function (p) {
-      var sub = p.home ? 'Home' : (p.eta ? '<b>ETA ' + p.eta + ' min</b>' : p.status);
-      return '<div class="h-who' + (p.home ? ' is-home' : '') + '" style="' + App.pstyle(p) + '">' +
-        App.avatar(p, 36, p.home ? '' : 'avatar--away') +
+      var mine = D.chores.filter(function (c) { return c.who === p.id; });
+      var done = mine.filter(function (c) { return c.done; }).length;
+      var stars = D.stars[p.id] != null ? App.icon('star', 13, 'i--fill') + D.stars[p.id] + (mine.length ? ' · ' : '') : '';
+      var sub = stars + (mine.length ? (done === mine.length ? '<b>Chores done</b>' : done + '/' + mine.length + ' chores') : (stars ? '' : 'No chores today'));
+      return '<div class="h-who is-home" style="' + App.pstyle(p) + '">' +
+        App.avatar(p, 36) +
         '<span><b>' + p.name + '</b><small>' + sub + '</small></span></div>';
     }).join('');
   }
@@ -118,7 +123,20 @@
       }).join('') + '</ul>';
   }
 
+  // Real home status when Hive / Spotify are connected (js/live.js), else Wes's demo.
   function status() {
+    var h = D.hive && D.hive.configured && D.hive.heating;
+    if (!h) return demoStatus();
+    var rows = '<div class="h-st-row">' + App.icon('thermo', 24) + '<b class="num">' + (h.current == null ? '–' : h.current.toFixed(1)) + '°</b><span>' +
+      (h.mode === 'OFF' ? 'heating off' : (h.working ? 'heating' : 'idle') + ' · set ' + h.target + '°') + '</span></div>';
+    (D.hive.lights || []).forEach(function (l) {
+      rows += '<div class="h-st-row">' + App.icon('bulb', 24) + '<span>' + App.esc(l.name) + ' · ' + (!l.online ? 'offline' : l.on ? 'on' + (l.brightness ? ' ' + l.brightness + '%' : '') : 'off') + '</span></div>';
+    });
+    var np = D.nowPlaying;
+    rows += '<div class="h-st-row h-st-music">' + App.icon('music', 24) + '<span>' + (np && np.playing ? '<b class="h-np">' + App.esc(np.title) + '</b> · ' + App.esc(np.device) : 'Spotify paused') + '</span></div>';
+    return '<div class="label">Home</div>' + rows;
+  }
+  function demoStatus() {
     var lights = D.devices.filter(function (d) { return d.type === 'light' && d.on; }).length;
     var unlocked = D.devices.filter(function (d) { return d.type === 'lock' && !d.locked; });
     var garage = D.devices.filter(function (d) { return d.type === 'garage'; })[0];
@@ -183,4 +201,5 @@
     if (n.getMinutes() === 0) { V.el.querySelector('.h-weather').innerHTML = weather(); V.el.querySelector('.h-lanes').innerHTML = lanes(); }
   });
   App.on('data', function () { if (App.current === 'home') paint(); });
+  App.on('live', function () { if (App.current === 'home' && V.el && V.el.querySelector('.h-status')) V.el.querySelector('.h-status').innerHTML = status(); });
 })();

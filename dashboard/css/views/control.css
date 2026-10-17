@@ -124,3 +124,22 @@
 .th-msg b { font-size: 24px; color: #fff; }
 .tile.is-offline { opacity: .55; }
 .tile.is-offline .tile-state small { display: block; font-size: 12px; font-weight: 600; color: var(--mute); }
+
+/* Hive card in Hive's orange (class set by js/views/control.js when Hive is connected) */
+.hc-climate.is-hive { background: #FFA41B; color: #1A1A1A; }
+.hc-climate.is-hive .label--light { color: rgba(26, 26, 26, .7); }
+.hc-climate.is-hive .th-btn { background: rgba(26, 26, 26, .12); color: #1A1A1A; }
+.hc-climate.is-hive .th-btn:active { background: rgba(26, 26, 26, .22); }
+.hc-climate.is-hive .th-set small { opacity: .75; }
+.hc-climate.is-hive .th-now { color: rgba(26, 26, 26, .75); }
+.hc-climate.is-hive .th-now b { color: #1A1A1A; }
+.hc-climate.is-hive .th-src { color: rgba(26, 26, 26, .55); }
+.hc-climate.is-hive .th-verb { background: rgba(26, 26, 26, .14); color: #1A1A1A; }
+.hc-climate.is-hive .th-verb--heating { background: #1A1A1A; color: #FFA41B; }
+.hc-climate.is-hive .seg { background: rgba(26, 26, 26, .12); }
+.hc-climate.is-hive .seg button { color: #1A1A1A; }
+.hc-climate.is-hive .seg button.is-on { background: #1A1A1A; color: #FFA41B; }
+.hc-climate.is-hive .th-boost { background: rgba(26, 26, 26, .12); color: #1A1A1A; }
+.hc-climate.is-hive .th-boost.is-on { background: #1A1A1A; color: #FFA41B; }
+.hc-climate.is-hive .th-msg { color: rgba(26, 26, 26, .75); }
+.hc-climate.is-hive .th-msg b { color: #1A1A1A; }

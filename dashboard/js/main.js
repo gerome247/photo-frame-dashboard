@@ -66,5 +66,6 @@ await import('./views/spotify.js');
 await import('./views/ambient.js');
 await import('./diag.js');
 window.App.start();
+await import('./live.js');
 shopping.watch(function () { window.App.emit('shopping-remote'); window.App.emit('data'); });
 choresStore.watch(function () { window.App.emit('chores-remote'); window.App.emit('data'); });

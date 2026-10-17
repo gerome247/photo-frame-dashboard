@@ -175,6 +175,8 @@
   }
 
   function climate() {
+    var box = V.el && V.el.querySelector('.hc-climate');
+    if (box) box.classList.toggle('is-hive', !!(V.hive && V.hive.configured));
     if (V.hive && V.hive.configured && V.hive.error && !V.hive.heating) return hiveError();
     if (hiveOn()) return hiveClimate();
     var c = D.climate;

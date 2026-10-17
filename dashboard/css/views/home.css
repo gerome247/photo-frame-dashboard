@@ -108,3 +108,6 @@
 .h-st-row span { color: var(--ink-2); }
 .h-st-row.is-warn { color: #B45F00; font-weight: 800; }
 .h-st-row.is-warn span { color: inherit; }
+.h-st-music span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.h-st-row .h-np { font-size: 17px; font-weight: 800; color: var(--ink); }
+.h-who small .i { display: inline-block; vertical-align: -1px; margin-right: 2px; color: #E0A000; }
