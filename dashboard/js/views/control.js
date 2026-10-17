@@ -27,6 +27,10 @@
   function tile(d) {
     var pend = V.pending[d.id] ? '<i class="pend"></i>' : '';
     if (d.type === 'light') {
+      if (d.offline) {
+        return '<div class="tile tile--light is-offline" data-dev="' + d.id + '"><span class="tile-icon">' + App.icon('bulb', 28) + '</span>' +
+          '<span class="tile-name">' + App.esc(d.name) + '</span><span class="tile-state">Offline<small>Switched off at the wall?</small></span></div>';
+      }
       return '<div class="tile tile--light' + (d.on ? ' is-on' : '') + '" data-dev="' + d.id + '" style="--lvl:' + (d.on ? d.level : 0) + '%">' +
         '<span class="tile-fill"></span>' + pend +
         '<span class="tile-icon">' + App.icon('bulb', 28) + '</span>' +
@@ -146,7 +150,7 @@
     if (!lights.length) return;
     D.rooms.unshift({ id: 'hive', name: 'Hive' });
     lights.forEach(function (l) {
-      D.devices.unshift({ id: 'hive-' + l.id, hive: true, hiveId: l.id, hiveType: l.type, room: 'hive', type: 'light', name: l.name, on: l.on, level: l.brightness || 100, flaky: !l.online });
+      D.devices.unshift({ id: 'hive-' + l.id, hive: true, hiveId: l.id, hiveType: l.type, room: 'hive', type: 'light', name: l.name, on: l.online && l.on, level: l.brightness || 100, offline: !l.online });
     });
   }
   function hiveLight(d, patch) {
@@ -309,7 +313,8 @@
   function bindTile(t) {
     (function () {
       var d = dev(t.dataset.dev);
-      if (d.type === 'light' || d.type === 'blind') sliderTile(t, d);
+      if (d.offline) t.addEventListener('click', function () { App.toast('<b>' + App.esc(d.name) + '</b> is offline in Hive. Check it’s switched on at the wall.', { icon: 'bulb', ms: 4000 }); });
+      else if (d.type === 'light' || d.type === 'blind') sliderTile(t, d);
       if (d.type === 'lock') {
         App.hold(t, 1000, {
           enabled: function () { return d.locked; },

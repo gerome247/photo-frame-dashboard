@@ -116,8 +116,11 @@
 .th-verb--off { background: rgba(255, 255, 255, .08); color: rgba(255, 255, 255, .6); }
 .th-src { font-size: 14px; color: rgba(255, 255, 255, .5); }
 .th-row { display: flex; align-items: center; gap: 10px; }
-.th-row .seg { flex: 1; }
-.th-boost { height: 52px; padding: 0 18px; border-radius: 999px; background: rgba(255, 255, 255, .12); color: #fff; font-size: 14px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; }
+.th-row .seg { flex: 1; display: flex; }
+.th-row .seg button { flex: 1; padding: 0 6px; font-size: 13px; letter-spacing: .04em; }
+.th-boost { height: 52px; padding: 0 14px; border-radius: 999px; background: rgba(255, 255, 255, .12); color: #fff; font-size: 14px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; }
 .th-boost.is-on { background: #FF6A1A; }
 .th-msg { display: flex; flex-direction: column; gap: 8px; padding: 30px 0; font-size: 17px; color: rgba(255, 255, 255, .75); }
 .th-msg b { font-size: 24px; color: #fff; }
+.tile.is-offline { opacity: .55; }
+.tile.is-offline .tile-state small { display: block; font-size: 12px; font-weight: 600; color: var(--mute); }
