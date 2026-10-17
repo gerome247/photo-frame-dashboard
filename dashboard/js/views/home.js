@@ -41,13 +41,28 @@
     }).join('');
   }
 
+  // Today's chores not yet ticked, in routine order (morning, after school, evening).
+  function choresLeft(who) {
+    var order = D.routines.map(function (r) { return r.id; });
+    return D.chores.filter(function (c) { return !c.done && (!who || c.who === who); })
+      .sort(function (a, b) { return order.indexOf(a.r) - order.indexOf(b.r); });
+  }
+  function routineName(id) { return (D.routines.filter(function (r) { return r.id === id; })[0] || {}).name || ''; }
+
   function hero() {
     var e = App.nextEvent(), now = App.now();
     if (!e) {
       var tomorrow = App.timedOn(App.addDays(now, 1))[0];
-      return '<div class="h-hero h-hero--empty" data-go="calendar">' +
+      var left = choresLeft(), people = [];
+      left.forEach(function (c) { if (people.indexOf(c.who) < 0) people.push(c.who); });
+      var names = people.map(function (id) { return id === 'any' ? 'anyone' : App.person(id).name; });
+      var namesText = names.length > 1 ? names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1] : names[0];
+      return '<div class="h-hero h-hero--empty" data-go="' + (left.length ? 'tasks' : 'calendar') + '">' +
         '<div class="label label--light">Rest of today</div>' +
-        '<div class="h-hero-title serif">Nothing else scheduled.<br><i>Enjoy the quiet.</i></div>' +
+        (left.length
+          ? '<div class="h-hero-title serif">No events today.<br><i>' + left.length + ' chore' + (left.length > 1 ? 's' : '') + ' still to do.</i></div>' +
+            '<div class="h-hero-meta">For ' + App.esc(namesText) + ' · tap to see them</div>'
+          : '<div class="h-hero-title serif">Nothing else scheduled.<br><i>Enjoy the quiet.</i></div>') +
         (tomorrow ? '<div class="h-hero-meta">Tomorrow starts with <b>' + App.esc(tomorrow.title) + '</b> at ' + App.fmt.time(tomorrow.start) + '</div>' : '') +
         '</div>';
     }
@@ -86,10 +101,24 @@
           return '<button class="h-ev' + (cur ? ' is-now' : '') + '" data-ev="' + e.id + '">' +
             '<span class="h-ev-t">' + (cur ? 'Now' : App.fmt.time(e.start, false)) + '</span>' +
             '<span class="h-ev-n">' + App.esc(e.title) + '</span></button>';
-        }).join('') : '<div class="h-free serif"><i>Free</i> the rest of the day</div>') +
+        }).join('') : '') +
         (more > 0 ? '<button class="h-more" data-go="calendar">+' + more + ' more</button>' : '') +
+        choresHTML(p.id, list.length) +
         '</div>';
     }).join('');
+  }
+
+  // A person's chores under their events: the ones left (up to 3), "Chores done" when finished,
+  // "Free" only when there are no events and no chores.
+  function choresHTML(id, events) {
+    var all = D.chores.filter(function (c) { return c.who === id; }), left = choresLeft(id);
+    if (!all.length) return events ? '' : '<div class="h-free serif"><i>Free</i> the rest of the day</div>';
+    if (!left.length) return '<div class="h-chores-done">' + App.icon('check', 18) + 'Chores done</div>';
+    var shown = left.slice(0, 3);
+    return shown.map(function (c) {
+      return '<button class="h-chore" data-go="tasks"><span class="h-chore-i">' + window.ChoreIcons.svg(c.icon, 18) + '</span>' +
+        '<span class="h-ev-n">' + App.esc(c.title) + '</span><span class="h-ev-t">' + App.esc(routineName(c.r)) + '</span></button>';
+    }).join('') + (left.length > 3 ? '<button class="h-more" data-go="tasks">+' + (left.length - 3) + ' more chores</button>' : '');
   }
 
   function ring(done, total, size) {

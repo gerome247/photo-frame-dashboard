@@ -111,3 +111,8 @@
 .h-st-music span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .h-st-row .h-np { font-size: 17px; font-weight: 800; color: var(--ink); }
 .h-who small .i { display: inline-block; vertical-align: -1px; margin-right: 2px; color: #E0A000; }
+.h-chore { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border-radius: 10px; border: 2px dashed rgb(var(--c-rgb) / .45); text-align: left; min-width: 0; }
+.h-chore .h-ev-n { flex: 1; min-width: 0; width: auto; font-size: 16px; }
+.h-chore .h-ev-t { flex: none; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.h-chore-i { flex: none; display: grid; place-items: center; color: var(--ink-2); }
+.h-chores-done { display: flex; align-items: center; gap: 6px; font-size: 16px; font-weight: 700; color: var(--c); padding: 4px 2px; }
