@@ -91,3 +91,4 @@
 .ce-days .ce-every { width: auto; padding: 0 18px; border-radius: 999px; font-size: 15px; letter-spacing: .04em; margin-left: 8px; }
 .ce-foot { display: flex; justify-content: flex-end; gap: 12px; margin-top: 16px; }
 .ce-foot .ce-del { margin-right: auto; color: var(--alert); border-color: var(--alert); }
+.ce-hint { text-transform: none; letter-spacing: 0; font-weight: 600; color: var(--mute); }

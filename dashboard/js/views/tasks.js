@@ -31,7 +31,7 @@
     if (!w) return '';
     var today = (App.now().getDay() + 6) % 7;
     return '<div class="ch-week"><div class="label">This week</div><div class="ch-week-row">' + DAYS.map(function (d, i) {
-      var cls = i > today ? 'is-future' : i === today ? 'is-today' : (w[i] ? 'is-hit' : 'is-miss');
+      var cls = i === today ? 'is-today' : i > today || w[i] == null ? 'is-future' : w[i] ? 'is-hit' : 'is-miss';
       return '<span class="' + cls + '"><i></i>' + d + '</span>';
     }).join('') + '</div></div>';
   }
@@ -127,6 +127,7 @@
   function editor(def) {
     var isNew = !def;
     var f = def ? Object.assign({}, def) : { id: D._cid(), title: '', icon: 'star', who: 'any', r: routine().id, stars: 1, days: '1111111' };
+    f.who = String(f.who).split(','); // several people: each gets it in their lane and ticks it
     var iconPicked = !isNew; // until an icon is tapped, typing the name picks one
     function iconsHTML() {
       var first = window.ChoreIcons.suggest(f.title).slice(0, 8);
@@ -139,9 +140,9 @@
       return '<div class="seg">' + opts.map(function (o) { return '<button class="' + (String(o[0]) === String(val) ? 'is-on' : '') + '" data-' + name + '="' + o[0] + '">' + o[1] + '</button>'; }).join('') + '</div>';
     }
     function bodyHTML() {
-      return '<div class="label">Who</div><div class="add-who">' + D.people.map(function (p) { return p.id; }).concat(['any']).map(function (id) {
+      return '<div class="label">Who <span class="ce-hint">· tap several</span></div><div class="add-who">' + D.people.map(function (p) { return p.id; }).concat(['any']).map(function (id) {
         var p = App.person(id);
-        return '<button class="who-btn' + (f.who === id ? ' is-on' : '') + '" data-who="' + id + '" style="' + App.pstyle(p) + '">' + App.avatar(p, 48) + '<span>' + (id === 'any' ? 'Anyone' : p.name) + '</span></button>';
+        return '<button class="who-btn' + (f.who.indexOf(id) >= 0 ? ' is-on' : '') + '" data-who="' + id + '" style="' + App.pstyle(p) + '">' + App.avatar(p, 48) + '<span>' + (id === 'any' ? 'Anyone' : p.name) + '</span></button>';
       }).join('') + '</div>' +
         '<div class="add-row"><div><div class="label">When</div>' + seg('when', D.routines.map(function (r) { return [r.id, r.name]; }), f.r) + '</div>' +
         '<div><div class="label">Stars</div>' + seg('stars', [[0, 'None'], [1, '1'], [2, '2'], [3, '3']], f.stars) + '</div></div>' +
@@ -174,7 +175,14 @@
         s.addEventListener('click', function (e) {
           var t;
           if ((t = e.target.closest('[data-icon]'))) { f.icon = t.dataset.icon; iconPicked = true; icons.querySelectorAll('.ce-icon').forEach(function (b) { b.classList.toggle('is-on', b === t); }); return; }
-          if ((t = e.target.closest('[data-who]'))) { f.who = t.dataset.who; body.innerHTML = bodyHTML(); return; }
+          if ((t = e.target.closest('[data-who]'))) {
+            var w = t.dataset.who, i = f.who.indexOf(w);
+            if (w === 'any') f.who = ['any']; // "Anyone" is one shared chore, not per person
+            else if (i >= 0) { f.who.splice(i, 1); if (!f.who.length) f.who = ['any']; }
+            else f.who = f.who.filter(function (x) { return x !== 'any'; }).concat([w]);
+            body.innerHTML = bodyHTML();
+            return;
+          }
           if ((t = e.target.closest('[data-when]'))) { f.r = t.dataset.when; body.innerHTML = bodyHTML(); return; }
           if ((t = e.target.closest('[data-stars]'))) { f.stars = +t.dataset.stars; body.innerHTML = bodyHTML(); return; }
           if ((t = e.target.closest('[data-day]'))) {
@@ -193,11 +201,15 @@
             f.title = input.value.trim();
             if (!f.title) { input.focus(); return App.toast('Give the chore a name', { icon: 'pencil', ms: 2500 }); }
             close();
-            S.saveChore({ id: f.id, title: f.title, icon: f.icon, who: f.who, r: f.r, stars: f.stars, days: f.days }).then(function (ok) {
+            var order = D.people.map(function (p) { return p.id; }).concat(['any']);
+            var who = f.who.slice().sort(function (a, b) { return order.indexOf(a) - order.indexOf(b); });
+            S.saveChore({ id: f.id, title: f.title, icon: f.icon, who: who.join(','), r: f.r, stars: f.stars, days: f.days }).then(function (ok) {
               if (!ok) return;
               if (f.r !== routine().id) V.routine = f.r === App.currentRoutine().id ? null : f.r; // show where it went
               refresh();
-              App.toast((isNew ? 'Added ' : 'Saved ') + '<b>' + App.esc(f.title) + '</b> for ' + (f.who === 'any' ? 'Anyone' : App.person(f.who).name), { icon: 'check', ms: 3000 });
+              var names = who.map(function (w) { return w === 'any' ? 'Anyone' : App.person(w).name; });
+              var list = names.length > 1 ? names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1] : names[0];
+              App.toast((isNew ? 'Added ' : 'Saved ') + '<b>' + App.esc(f.title) + '</b> for ' + list, { icon: 'check', ms: 3000 });
             });
           }
         });
@@ -211,7 +223,10 @@
     if (e.target.closest('[data-new]')) return editor(null);
     if (e.target.closest('[data-editmode]')) { V.editing = !V.editing; return render(); }
     if ((t = e.target.closest('[data-ch]'))) {
-      if (V.editing) return editor(D.choreDefs.filter(function (x) { return x.id === t.dataset.ch; })[0]);
+      if (V.editing) {
+        var inst = D.chores.filter(function (x) { return x.id === t.dataset.ch; })[0];
+        return editor(D.choreDefs.filter(function (x) { return inst && x.id === inst.defId; })[0]);
+      }
       var c = D.chores.filter(function (x) { return x.id === t.dataset.ch; })[0];
       if (!c || V.pending[c.id]) return;
       if (c.done) return undone(c);

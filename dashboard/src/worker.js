@@ -148,12 +148,14 @@ async function shopping(request, env) {
 }
 
 // ------------------------------------------------------------ chores
-// Chore definitions plus one "done" row per chore per day, so every chore resets at midnight
-// (the screen's own date, sent as ?day=YYYY-MM-DD). Stars are counted from the done rows.
+// Chore definitions plus one tick per chore, person and day, so every chore resets at midnight
+// (the screen's own date) and a chore shared by several people is ticked by each of them.
+// Stars are counted from the ticks.
 //   GET  /api/chores?from=YYYY-MM-DD&to=YYYY-MM-DD   -> { chores, done (in range), stars }
 //   POST /api/chores { upsert: [chore], delete: [id] } -> same as GET
-//   POST /api/chores/done { id, day, done, by?, earner?, stars? } -> same as GET
-// A chore: { id, title, icon, who, r, stars, days } (days: 7 chars, Mon..Sun, "1" = that day).
+//   POST /api/chores/done { id, who, day, done, by?, earner?, stars? } -> same as GET
+// A chore: { id, title, icon, who, r, stars, days }. who: "maya" or "maya,otto" (or "any");
+// days: 7 chars, Mon..Sun, "1" = that day.
 
 let choreTables = false;
 async function choresTables(db) {
@@ -162,9 +164,9 @@ async function choresTables(db) {
     db.prepare(`CREATE TABLE IF NOT EXISTS chores (
       id TEXT PRIMARY KEY, title TEXT NOT NULL, icon TEXT NOT NULL, who TEXT NOT NULL, r TEXT NOT NULL,
       stars INTEGER NOT NULL, days TEXT NOT NULL, created INTEGER NOT NULL, updated INTEGER NOT NULL)`),
-    db.prepare(`CREATE TABLE IF NOT EXISTS chore_done (
-      chore_id TEXT NOT NULL, day TEXT NOT NULL, by TEXT, earner TEXT, stars INTEGER NOT NULL, at INTEGER NOT NULL,
-      PRIMARY KEY (chore_id, day))`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS chore_ticks (
+      chore_id TEXT NOT NULL, who TEXT NOT NULL, day TEXT NOT NULL, by TEXT, earner TEXT, stars INTEGER NOT NULL, at INTEGER NOT NULL,
+      PRIMARY KEY (chore_id, who, day))`),
   ]);
   choreTables = true;
 }
@@ -174,19 +176,21 @@ const WHO = /^[a-z0-9_-]{1,20}$/;
 function choreItem(c) {
   if (!c || typeof c !== 'object' || !ID.test(c.id || '')) return null;
   const title = text(c.title, 60);
-  if (!title || !/^[a-z0-9-]{1,40}$/.test(c.icon || '') || !WHO.test(c.who || '') || !['morning', 'after', 'evening'].includes(c.r)) return null;
+  const who = [...new Set(String(c.who || '').split(','))];
+  if (!who.length || who.length > 6 || !who.every((w) => WHO.test(w)) || (who.includes('any') && who.length > 1)) return null;
+  if (!title || !/^[a-z0-9-]{1,40}$/.test(c.icon || '') || !['morning', 'after', 'evening'].includes(c.r)) return null;
   const days = /^[01]{7}$/.test(c.days || '') ? c.days : '1111111';
-  return { id: c.id, title, icon: c.icon, who: c.who, r: c.r, stars: Math.min(5, Math.max(0, Math.round(Number(c.stars)) || 0)), days };
+  return { id: c.id, title, icon: c.icon, who: who.join(','), r: c.r, stars: Math.min(5, Math.max(0, Math.round(Number(c.stars)) || 0)), days };
 }
 
 async function choresState(db, url) {
   const from = url.searchParams.get('from'), to = url.searchParams.get('to');
   const [defs, done, stars] = await Promise.all([
-    db.prepare('SELECT id, title, icon, who, r, stars, days FROM chores ORDER BY created, id').all(),
+    db.prepare('SELECT id, title, icon, who, r, stars, days, created FROM chores ORDER BY created, id').all(),
     DAY.test(from || '') && DAY.test(to || '')
-      ? db.prepare('SELECT chore_id AS id, day, by, earner, stars FROM chore_done WHERE day >= ?1 AND day <= ?2').bind(from, to).all()
+      ? db.prepare('SELECT chore_id AS id, who, day, by, earner, stars FROM chore_ticks WHERE day >= ?1 AND day <= ?2').bind(from, to).all()
       : { results: [] },
-    db.prepare('SELECT earner, SUM(stars) AS stars FROM chore_done WHERE earner IS NOT NULL GROUP BY earner').all(),
+    db.prepare('SELECT earner, SUM(stars) AS stars FROM chore_ticks WHERE earner IS NOT NULL GROUP BY earner').all(),
   ]);
   const totals = {};
   stars.results.forEach((r) => { totals[r.earner] = r.stars; });
@@ -207,15 +211,15 @@ async function chores(request, env, url) {
     const now = Date.now();
     const stmts = [];
     if (url.pathname === '/api/chores/done') {
-      if (!ID.test(b.id || '') || !DAY.test(b.day || '')) return Response.json({ error: 'bad done' }, { status: 400 });
+      if (!ID.test(b.id || '') || !WHO.test(b.who || '') || !DAY.test(b.day || '')) return Response.json({ error: 'bad done' }, { status: 400 });
       if (b.done) {
         const by = WHO.test(b.by || '') ? b.by : null, earner = WHO.test(b.earner || '') ? b.earner : null;
         stmts.push(db.prepare(
-          `INSERT INTO chore_done (chore_id, day, by, earner, stars, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-           ON CONFLICT(chore_id, day) DO UPDATE SET by = ?3, earner = ?4, stars = ?5, at = ?6`,
-        ).bind(b.id, b.day, by, earner, earner ? Math.min(5, Math.max(0, Math.round(Number(b.stars)) || 0)) : 0, now));
+          `INSERT INTO chore_ticks (chore_id, who, day, by, earner, stars, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+           ON CONFLICT(chore_id, who, day) DO UPDATE SET by = ?4, earner = ?5, stars = ?6, at = ?7`,
+        ).bind(b.id, b.who, b.day, by, earner, earner ? Math.min(5, Math.max(0, Math.round(Number(b.stars)) || 0)) : 0, now));
       } else {
-        stmts.push(db.prepare('DELETE FROM chore_done WHERE chore_id = ?1 AND day = ?2').bind(b.id, b.day));
+        stmts.push(db.prepare('DELETE FROM chore_ticks WHERE chore_id = ?1 AND who = ?2 AND day = ?3').bind(b.id, b.who, b.day));
       }
     } else {
       const upsert = Array.isArray(b.upsert) ? b.upsert.slice(0, 200).map(choreItem) : [];
