@@ -7,7 +7,9 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 ANDROID_HOME="${ANDROID_HOME:-/opt/homebrew/share/android-commandlinetools}"
-BT="$ANDROID_HOME/build-tools/34.0.0"
+# d8 from build-tools 34 crashes (NullPointerException) on classes from some newer JDKs; then
+# point BUILD_TOOLS at a newer version, e.g. BUILD_TOOLS=$ANDROID_HOME/build-tools/36.1.0
+BT="${BUILD_TOOLS:-$ANDROID_HOME/build-tools/34.0.0}"
 JAR="$ANDROID_HOME/platforms/android-34/android.jar"
 KS="$HOME/.android/debug.keystore"
 
@@ -22,21 +24,12 @@ mkdir -p build/gen/com/wesbos/homehq
 printf 'package com.wesbos.homehq;\n\nfinal class Config {\n  static final String DEFAULT_URL = "%s";\n}\n' "$URL" \
   > build/gen/com/wesbos/homehq/Config.java
 
-# KIOSK_HOME=1 also registers the kiosk as a Home app, so it starts on boot on devices whose
-# BOOT_COMPLETED goes only to whitelisted apps (e.g. the PF1007 photo frame). Pick it as Home once.
-MANIFEST=AndroidManifest.xml
-if [ "${KIOSK_HOME:-0}" = 1 ]; then
-  sed 's|<category android:name="android.intent.category.LAUNCHER" />|&\n        <category android:name="android.intent.category.HOME" />|' \
-    AndroidManifest.xml > build/AndroidManifest.xml
-  MANIFEST=build/AndroidManifest.xml
-fi
-
 "$BT/aapt2" compile --dir res -o build/res.zip
-"$BT/aapt2" link -o build/base.apk -I "$JAR" --manifest "$MANIFEST" build/res.zip \
-  --java build/gen --min-sdk-version 22 --target-sdk-version 23 --version-code 1 --version-name 1.0
+"$BT/aapt2" link -o build/base.apk -I "$JAR" --manifest AndroidManifest.xml build/res.zip \
+  --java build/gen --min-sdk-version 22 --target-sdk-version 23 --version-code 2 --version-name 1.1
 
 javac -nowarn -source 8 -target 8 -classpath "$JAR" -d build/classes \
-  src/com/wesbos/homehq/*.java build/gen/com/wesbos/homehq/*.java 2>&1 | grep -v "^warning\|^Note\|bootstrap" || true
+  src/com/wesbos/homehq/*.java build/gen/com/wesbos/homehq/*.java
 
 "$BT/d8" --min-api 22 --lib "$JAR" --output build $(find build/classes -name '*.class')
 (cd build && zip -qj base.apk classes.dex)

@@ -225,7 +225,12 @@
     if ((t = e.target.closest('[data-more]'))) return moreSheet(t.dataset.more.split(','));
     if ((t = e.target.closest('[data-nav]'))) return nav(+t.dataset.nav);
     if ((t = e.target.closest('[data-today]'))) { V.date = App.dayStart(App.now()); if (V.mode === 'month') V.date.setDate(1); V.scroll = null; return render(); }
-    if ((t = e.target.closest('[data-mode]'))) {
+    // button[data-mode], not [data-mode]: #stage also carries data-mode, for the display mode
+    // (day / ambient / night), and is an ancestor of everything, so the bare selector matched
+    // it on every click in this view. This branch then swallowed clicks meant for the ones
+    // below it — month cells, week columns and the add button — and set V.mode from the
+    // stage's attribute instead, which is why tapping any day in Month opened the 1st.
+    if ((t = e.target.closest('button[data-mode]'))) {
       V.mode = t.dataset.mode;
       if (V.mode === 'month') V.date = new Date(V.date.getFullYear(), V.date.getMonth(), 1);
       V.scroll = null;

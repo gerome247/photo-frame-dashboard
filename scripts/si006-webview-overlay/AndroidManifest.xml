@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.wesbos.homehq.si006.webview" android:versionCode="1" android:versionName="1.0">
+  <uses-sdk android:minSdkVersion="23" android:targetSdkVersion="23" />
+  <overlay android:targetPackage="android" android:priority="1" />
+  <application android:hasCode="false" android:label="SI006 WebView configuration" />
+</manifest>

@@ -221,6 +221,11 @@ with published tools: a read-only `ums` backup, then a guarded boot write.
 
 ## 3. Confirm root ADB before the Android setup
 
+The [January Windows unit report](pf1007l-windows-20260113-usb-adb-report.md)
+reached USB root ADB with a verified one-sector `build.prop` edit after bulk
+U-Boot reads failed. Its boot image remained original. It also records the
+Windows raw-disk, console-pause, and binary `exec-out` pitfalls from that session.
+
 Only continue once Android boots and ADB actually works:
 
 ```sh
@@ -279,6 +284,12 @@ before any replacement. A `dd`/`tar` error may otherwise leave a misleading file
 Old `adbd` can merge remote stderr into binary `exec-out` output; the `2>/dev/null`
 in these commands prevents a `dd` status footer from contaminating the image.
 
+To read the whole eMMC in chunks (`/dev/block/mmcblk0` with `skip=`), use
+`/sbin/busybox dd`. The stock `dd` returned **0 bytes, with no error**, for every chunk
+that starts at 2 GiB or later (firmware 20260529, observed). `busybox dd` read those
+chunks, and gave the same bytes as the stock `dd` below 2 GiB. Check each chunk's size,
+not only its hash: an empty chunk has the same MD5 on the frame and on the host.
+
 The tested session independently verified the whole system partition and boot
 image. Recovery had partial spot checks rather than a complete second reread.
 This was **not a full-device backup**: userdata, hardware boot areas and every
@@ -311,7 +322,10 @@ adb -d install diagnostics/firefox.apk
 adb -d shell am start -a android.intent.action.MAIN -c android.intent.category.HOME -p amirz.rootless.nexuslauncher
 ```
 
-Confirm the new launcher is visible before disabling the vendor launcher:
+Confirm the new launcher is visible before disabling the vendor launcher. Also check by hand on the
+panel that you can reach Android Settings → Apps from it. On a unit without working USB ADB,
+AiMOR is the only route back in that doesn't need the SD card; see
+[the lockout notes](pf1007l-20260410-network-adb.md#6-lockout-after-disabling-aimor-and-offline-recovery).
 
 ```sh
 adb -d shell pm disable com.efercro.os.aimor
@@ -321,6 +335,14 @@ adb -d shell input keyevent KEYCODE_HOME
 Select Rootless Launcher as the Home default if prompted.
 Disabling AiMOR also closes its remote root shell connection.
 See [aimor-remote-root-shell.md](aimor-remote-root-shell.md).
+
+Confirm the physical screen as well as Android's foreground activity. A
+[May 2026 macOS setup](pf1007l-macos-20260529-report.md#android-home-screen-and-evidence-after-reboot)
+produced black `adb exec-out screencap -p` images after reboot while the owner saw
+Rootless's date, arrow, and search bar on the panel. A black capture alone did not
+establish a boot or launcher failure, and changing the animation scale did not fix
+the capture. Ask what the panel shows before changing the setup.
+
 Also disable `com.DeviceTest`. It runs as the system user and has an unprotected receiver
 that enables or disables components of any package.
 
@@ -422,6 +444,11 @@ Keep the host server and USB connected. Recreate the reverse mapping after a
 device/ADB restart. Hold two fingers still for **1.5 seconds** to exit to the
 launcher. Boot auto-start is not implemented by this procedure.
 
+Don't make a two-finger hold your only way out. On one April unit, a different kiosk's two-finger
+hold never triggered for the owner. The `gslX680` driver reports multitouch (tracking IDs 0–11),
+but [PR #40](https://github.com/wesbos/photo-frame-dashboard/pull/40) observed that it reads two
+fingers held close together as one touch. A control revealed by a single tap did work on that unit.
+
 The dashboard contains **sample data**, not your real calendar. Older Android
 trust stores can reject external HTTPS images even though the local HTML loads.
 That happened with Picsum on this unit. Our local setup used a host image proxy
@@ -470,6 +497,207 @@ was obtained. Extra swap was not indicated by this workload. First reduce
 background apps, image dimensions, animated effects and hidden-view work, then
 measure again; do not assume the Rockchip swap prescription applies.
 
+### Matched-page comparison on another January unit
+
+On 2026-10-11, a Humblestead PF1007L with the same January firmware, Android 6.0.1,
+1 GiB RAM and 1280 × 800 display was measured from a Windows host. WebView
+106.0.5249.126 and Firefox 143.0.4 rendered the same lightweight mock dashboard.
+This used a separate small kiosk, not Home HQ. No real home controls were used.
+
+| Foreground page and app | Median aggregate PSS | Range | Processes counted |
+| --- | --- | --- | --- |
+| Mock dashboard, WebView 106 kiosk | 86.78 MiB | 86.78–87.09 MiB | 3 |
+| Same mock dashboard, Firefox 143 | 264.63 MiB | 264.39–264.81 MiB | 5 |
+| Existing Home Assistant dashboard, Firefox 143 | 357.24 MiB | 356.40–358.06 MiB | 5 |
+
+Each window had 60 s to settle, then six PSS readings at 10 s intervals, on the
+same boot. Start each browser afresh on its comparison page, keep the existing
+profile and saved login, and perform no actions during the capture. The mock
+page was served from the PC over USB reverse. The Home Assistant page used its
+existing network path, so it is context, not the same-page engine comparison.
+
+Count all of the app's processes. The kiosk total includes its main process and
+`com.android.webview:webview_service` / `webview_apk`. Those two helpers remained
+after the kiosk stopped, using about 31–33 MiB during the Firefox captures; their
+cost is excluded from the Firefox app totals rather than inflating Firefox's
+result. An earlier Firefox run that loaded Home Assistant before the mock had
+six processes and 360.69 MiB median PSS; it was excluded from the fresh-page table.
+
+The matched mock page used 177.85 MiB less PSS in the kiosk, about **67.2%**. The
+owner felt similar responsiveness in the two browsers on that page. There was
+no instrumented touch-latency measurement. Sequential cache/history and thermal
+state differed (44–46 °C), and the collector itself affects CPU. This does not
+establish a CPU speedup, energy saving or a RAM ratio for other dashboards.
+
+For a repeatable comparison, retain each process's PSS and report the sum for
+each reading, then the median/range of those sums. Record app versions, page,
+boot, settling time and retained provider processes. Do not compare one app's
+Java heap with another app's total PSS. `/proc/meminfo` on this kernel has no
+`MemAvailable`; a free-plus-cache estimate is not that kernel metric. Keep raw
+process/network reports private.
+
+## 9. January unit: remote management and background services
+
+These are observations from one Humblestead PF1007L, tested on 2026-10-10 through
+2026-10-12 with Windows and PowerShell 7. The About-screen firmware was
+`YHK.F-null-A33-1001-D1024-PF1007L-321-OS-AIMOR.0.20260113`, AiMOR 6.0.78,
+Allwinner A33, Android 6.0.1 / SDK 23 / ARMv7. The Android fingerprint matches
+section 1. Stock USB was mass storage only; root ADB was enabled with a guarded
+boot-ramdisk patch and a custom bounded MMC helper. This is not another rooting
+procedure: the helper is not included. The owner accepted two matching boot
+captures and limited system backups, **not a full-device backup**. That does not
+meet the repository's complete-backup rule, and physical restoration was not
+tested. The reports below start after root was established.
+
+### Native Tailscale and root SSH
+
+The official Linux static **ARM** build of Tailscale 1.104.1 ran on this Android
+unit; a current Android Tailscale APK was not needed. Download provenance:
+
+| Item | Official source / SHA-256 |
+| --- | --- |
+| Archive | [tailscale_1.104.1_arm.tgz](https://pkgs.tailscale.com/stable/tailscale_1.104.1_arm.tgz) |
+| Official checksum | [archive checksum](https://pkgs.tailscale.com/stable/tailscale_1.104.1_arm.tgz.sha256) |
+| Archive SHA-256 | `aea7ae225989d302444b10b44aa42e89fdfa2a691b4d124ed710b4753518a875` |
+
+The version/hash records what was tested, not a recommendation to stay on that
+version indefinitely. Before installing any version, check its official checksum
+and compatibility. Do not copy authenticated state or publish the sign-in URL.
+
+The tested daemon used `--tun=userspace-networking`, a private Unix socket and
+private state/log directories, `--port=0` and `--no-logs-no-support`. Browser
+tailnet access used `--outbound-http-proxy-listen=127.0.0.1:1056`; it did not
+listen for proxy clients on the LAN. `TS_LOGS_DIR` supplied a writable private
+log directory. Root SSH needed two additional Android compatibility adapters:
+
+- Android had no normal `/etc/passwd` database. A daemon-local `getent` adapter
+  returned only the existing UID 0 / GID 0 account, with `/system/bin/sh` and a
+  private home directory, for a `passwd` query for `root` or `0`. It rejected
+  other lookups. It did not create or change a system account.
+- Android's `id` rejected the `-Gz` query used for the root account. A local
+  adapter returned group 0 with a NUL terminator for that query only and
+  delegated other arguments to `/system/bin/id`.
+
+Only the owned daemon's `PATH` included those adapters. SSH sessions used
+`/system/bin:/system/xbin`, with `SHELL=/system/bin/sh` and
+`TAILSCALE_SSH_DEFAULT_PATH` set to that path. Tailnet authentication and SSH
+policy still applied. The first SSH trial failed at policy, before account
+lookup; authenticated root SSH worked after the owner approved a frame-specific
+rule. Root SSH grants broad device control. Prefer a narrowly scoped rule and
+normal interactive tailnet sign-in; an account adapter is not authorization.
+Both network access to port 22 and an SSH rule are needed; see the official
+[Tailscale SSH guide](https://tailscale.com/docs/features/tailscale-ssh). Its
+supported server platforms are Linux and the open-source macOS client. This
+Android result with adapters is a one-unit compatibility report, not an official
+Android SSH-server support claim. Normal Tailscale coordination and encrypted
+tailnet traffic still occur even with support logging disabled.
+
+Userspace networking did **not** give every Android app a VPN interface or
+system MagicDNS. The daemon/proxy could reach tailnet IPs and MagicDNS names, and
+Firefox could reach them through the loopback proxy. Changing Android DNS to
+Quad100 alone does not supply tailnet routes or the userspace DNS interception.
+For the production dashboard, the browser used a direct LAN URL with its global
+proxy off; Tailscale remained available for management. General kernel/TUN VPN
+operation, SSH PTY and SFTP were not tested.
+See the official [userspace-networking explanation](https://tailscale.com/docs/concepts/userspace-networking)
+and [Quad100 reference](https://tailscale.com/docs/reference/quad100).
+
+### Startup and cleanup
+
+A separate, owner-approved Home/network helper started a fixed root-owned
+supervisor after Android boot. It was not a `/system` boot hook. On this firmware,
+an ordinary boot receiver alone did not provide reliable startup. The Home task
+had to remain available; finishing it prevented later navigation rebinding.
+This is additional behavior to check on a unit, not a reason to replace Home HQ's
+existing [Home startup](../dashboard/kiosk/README.md#start-at-boot).
+
+The startup implementation checked root, the expected private device identity,
+firmware, current boot and payload ownership/modes before running anything.
+Authenticated state stayed mode 0600; only trusted root-owned code was executed.
+Record and reject symlink or ownership mismatches rather than trusting a path
+under shell-writable `/data/local/tmp`. The private helpers are not supplied here,
+so this is a record of the required pieces, **not a persistent-install recipe**.
+
+The supervisor waited for its exact daemon child. A PID file or a stale `ready`
+marker was insufficient: checks matched command/socket, boot and process identity
+before signalling a process. Explicit HUP/INT/TERM handlers performed cleanup;
+an EXIT trap alone did not cover the observed signal exits. On this Android 6
+build, deleting `http_proxy` alone left the framework proxy active. Cleanup first
+set it to `:0`, then deleted it, and only changed it if it still matched the
+helper's loopback proxy. Save a prior proxy before testing and do not overwrite a
+different proxy installed by someone else.
+
+Planned undo (not exercised): verify independent USB access; keep a working
+launcher and on-panel Settings. Prevent helper autostart, disable Tailscale SSH while its
+daemon is running, then stop only the matching supervisor/daemon. Restore the
+saved proxy and Home destination before removing the newly installed helpers.
+Do not copy our private startup paths, policies or authenticated state.
+
+### Vendor background cleanup: the list is an exception list on this build
+
+The first persistent setup later went offline while Wi-Fi still had IPv4.
+`BackgroundManagerService` logged force-stops of the network and navigation
+helper packages, followed by SIGKILL of their root supervisor/daemon process
+group. It also cleared the selected navigation service. A `ready` marker
+survived, so checking it alone falsely suggested the network helper was healthy.
+
+Read-only checks on an already rooted, selected unit:
+
+```sh
+adb -d shell settings get system kill_background_services
+adb -d shell settings get system kill_background_services_list
+adb -d shell settings get secure enabled_accessibility_services
+adb -d shell settings get secure accessibility_enabled
+```
+
+Keep this output private: it can contain personal package/service choices.
+Decompiled firmware showed `allowBackgroundTask` treating the comma-separated
+`kill_background_services_list` as **exceptions** when all-app cleanup was on,
+despite an internal variable named `Blacklist`. A `SettingsObserver` reloaded
+the setting live. `executeKillBackgroundTask` and `skipService` consulted it.
+This is the `system` namespace; the boot-broadcast list is a different setting.
+Do not infer the same semantics on other firmware from the key name alone.
+
+The owner-approved repair appended only the installed network/navigation helper,
+launcher and Firefox packages, retaining existing entries and leaving cleanup
+enabled for other apps. It saved the exact original value (including absence),
+compared it before writing, verified readback and the live Binder allow results,
+and checked that an unlisted probe was still disallowed. The writer attempts
+restoration only on the live-allow timeout, while the setting still matches its
+candidate. Readback/probe and transport failures have no automatic rollback.
+Planned undo (not exercised): restore the saved value, or delete the key if it
+was originally absent, only while it still matches the candidate. No vendor
+firmware was edited and no blanket cleanup-disable was needed.
+
+The Binder transaction number and allowlist writer are intentionally not offered
+as generic paste-in commands. Confirm the implementation and transaction on the
+exact firmware, keep the original setting, and obtain approval for the specific
+packages before changing it. This behavior differs from the May service-selection
+reset in [PR71](https://github.com/wesbos/photo-frame-dashboard/pull/71).
+
+### What passed, and what remains untested
+
+After the cleanup repair, 20 read-only observations over 603.2 s retained the same
+daemon and bound navigation while Firefox stayed foreground, without bringing a
+helper activity to the front as keepalive. Software and owner-performed cold
+boots later recovered Wi-Fi, authenticated Tailscale root SSH and navigation
+without a host starting the daemon. Earlier failed cold boots remain relevant:
+changing the Wi-Fi MAC before IPv4 existed disrupted association on this unit;
+deferring that change until IPv4 appeared passed later tests. The underlying
+driver cause was not proven. This is not evidence against the different strategy
+tested on newer firmware in [pf1007l-boot-fixes.md](pf1007l-boot-fixes.md).
+
+A separate three-hour capture after five minutes settling recorded 180 one-minute
+samples with Wi-Fi IPv4, Tailscale Online and the same daemon at every sample,
+with no sample gaps. It cannot exclude brief outages between readings or establish
+indefinite uptime. The collectors and private logs are not shipped in this repo.
+
+The January frame also retained its selected accessibility component across a
+reboot while `accessibility_enabled` became `0`. A selected-services check alone
+misses that state. Our separately approved navigation app restored only the
+master switch when its own component remained selected. The Home HQ repair for
+this case is host-tested, not installed or physically reboot-tested on this unit.
+
 ## Undo and hand-off
 
 - Re-enable vendor apps with `pm enable com.efercro.os.aimor` and
@@ -487,3 +715,70 @@ measure again; do not assume the Rockchip swap prescription applies.
 
 This setup does not update Android, remove the root exposure, configure automatic
 startup, or integrate real calendar data. Those are separate tasks.
+
+## Sensor and native UI observations
+
+Tested on one PF1007L over USB from Linux: AiMOR 6.0.78, reported firmware
+suffix `V10-1680.0.20260529`, Android 6.0.1 / SDK 23, A33, about 1 GiB RAM,
+1280 × 800 display and nominal 16 GB eMMC. Inventory used read-only
+`dumpsys`, `/proc` and `/sys`; no board teardown or bus writes.
+
+An [existing PF1007L report](pf1007l-macos-20260529-no-mmc-hs-report.md) lists
+the same sensor names. Additional checks distinguish working behavior from
+advertised interfaces:
+
+| Interface | Observed | Unverified |
+| --- | --- | --- |
+| SC7A20 accelerometer | Live XYZ samples; `sc7a20` at I2C `1-0019`. Physical portrait/landscape rotation worked with `SCREEN_ORIENTATION_FULL_SENSOR`. | Calibration and accuracy. |
+| LTR-C216R-14 light | SensorService sends values 63–64 to AutomaticBrightnessController. | Response to changing light; physical part identity. |
+| AW. ambient temperature | Type 13 advertised; no samples or active client. | A working ambient sensor. |
+| SoC thermal | `sunxi-therm` reports raw 43 in thermal and hwmon nodes. | Scaling and calibration; distinct from ambient temperature. |
+| Silead touch | `gslX680new` at I2C `0-0040`; multitouch advertised. Taps and swipes worked. | Reliable close two-finger gestures. |
+| Audio | `SUNXI-CODEC` exposes playback/capture; speaker playback works. | Fitted microphone or working capture. |
+| Camera | Camera HAL present; camera service reports zero devices. | Physical inspection. |
+| Bluetooth | Feature flags present; no sysfs/rfkill controller, Bluetooth app or connected framework service. | Working Android stack or fitted radio; Linux BLE support is reported below on a different unit (the Omarchy SD build). |
+| Power | USB online. Battery node reports present/charging with zero voltage/capacity. Reconnecting USB power caused a cold boot. | A usable battery. |
+
+No gyroscope, magnetometer or proximity sensor was listed. SensorService's
+"9-axis fusion disabled" message and Android feature flags do not establish
+fitted hardware. USB data and power worked; host peripherals were not tested.
+
+VirtualSoftKeys intercepted roughly the bottom 64 pixels even when invisible.
+Moving controls above the overlay restored taps. Keep an accessible exit to
+the launcher and Settings.
+
+Firefox reported software WebRender and `FEATURE_FAILURE_NO_GLES_3` on the
+Mali-400. Dashboard app PSS was about 265 MiB in Firefox, 46 MiB in stock
+WebView and 10–12 MiB in a native framebuffer app. A native RGB565 photo viewer used
+23–25 MiB with one decoded next photo, bounded thumbnail workers and a 4 MiB
+thumbnail cache. These are short-run snapshots of different implementations,
+not a controlled benchmark. PSS excludes GPU allocations and memory attributed
+to shared compositor/media services.
+
+scrcpy 5.0.1 AOA HID worked without video/audio mirroring. Over 30 key presses,
+the native app's event-to-draw interval was median 13 ms, p95 22 ms. This
+excludes USB transit, scanout and pixel response; it is not end-to-end latency.
+
+## Native Linux / Omarchy SD build
+
+Paolo Rosson ([`@redp314`](https://x.com/redp314)) built a separate, experimental
+Arch Linux ARM and Omarchy path for the Humblestead HM-PF1007-BK / EFERCRO
+PF1007L variant. It boots from microSD and deliberately leaves the original
+eMMC untouched; it is independent of this guide's Android recovery and boot
+patch routes.
+
+The tested unit has an Allwinner A33, 1 GB RAM, Mali-400 graphics, an 800×1280
+DSI panel, Silead touch, and AIC8800 Wi-Fi/Bluetooth. Its working features are
+Hyprland/Omarchy, display and touch rotation, an on-screen keyboard, Wi-Fi,
+and Bluetooth LE mouse/keyboard support. Audio, accelerometer-based rotation,
+and automatic ambient-light dimming are still being brought up. The internal
+radio is 2.4 GHz only.
+
+The SD-image builder and frame-specific installer are at
+[`pangoleen/ormarch-picture-frame`](https://github.com/pangoleen/ormarch-picture-frame/tree/a3d83874aabcae655f245973e6408937a591e39f)
+(linked at the commit we looked at). **It is third-party and has not been reviewed here.** The image
+enables passwordless `sudo` and an auto-login console on USB serial, so anyone with the frame in
+hand has root.
+They are for this exact PF1007L hardware family: start with the device checks
+and keep the original card and Android firmware backup before attempting the
+Linux route.

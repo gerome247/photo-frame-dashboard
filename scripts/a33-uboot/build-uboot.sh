@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Build the read-only PF1007L U-Boot (mainline v2025.10 + pf1007l-uboot.patch) in Docker.
+# Also builds sunxi-spl-warmup.bin, an SPL that returns to FEL right after DRAM init.
 # Outputs go to the ignored diagnostics/a33-uboot-out/. Nothing here touches a device.
 #
 #   scripts/a33-uboot/build-uboot.sh
@@ -38,20 +39,24 @@ cp -a /src /tmp/src && cd /tmp/src
 make O=/build pf1007l_backup_defconfig > /dev/null
 make O=/build -j"$(nproc)" > /out/build.log 2>&1 || { tail -40 /out/build.log; exit 1; }
 cp /build/u-boot-sunxi-with-spl.bin /build/.config /out/
+make O=/warmup pf1007l_backup_defconfig > /dev/null
+make O=/warmup KCFLAGS=-DPF1007L_DRAM_WARMUP -j"$(nproc)" >> /out/build.log 2>&1 || { tail -40 /out/build.log; exit 1; }
+cp /warmup/spl/sunxi-spl.bin /out/sunxi-spl-warmup.bin
 mkimage -C none -A arm -T script -d /out/ums-readonly.cmd /out/ums-readonly.scr > /dev/null
 grep -E "^CONFIG_(DRAM_CLK|DRAM_ZQ|MMC_SUNXI_SLOT_EXTRA|USB_MUSB_GADGET|CMD_USB_MASS_STORAGE|CRC32_VERIFY|BOOTDELAY)=" /build/.config
 '
 
 # The SPL must stay clear of the early stack/global-data area (about 0x5f20 with the
 # default 0x2000 early malloc). See docs/allwinner-a33-boot-access.md.
-python3 -I - "$OUT/u-boot-sunxi-with-spl.bin" <<'EOF'
+python3 -I - "$OUT/u-boot-sunxi-with-spl.bin" "$OUT/sunxi-spl-warmup.bin" <<'EOF'
 import sys
-spl = open(sys.argv[1], 'rb').read()[:0x6000]
-end = max(i for i, b in enumerate(spl) if b) + 1
-print(f"SPL code ends at {end:#x}")
-if end > 0x5e00:
-    sys.exit("STOP: SPL is too close to the stack/global-data area")
+for path in sys.argv[1:]:
+    spl = open(path, 'rb').read()[:0x6000]
+    end = max(i for i, b in enumerate(spl) if b) + 1
+    print(f"{path.rsplit('/', 1)[-1]}: SPL code ends at {end:#x}")
+    if end > 0x5e00:
+        sys.exit("STOP: SPL is too close to the stack/global-data area")
 EOF
 
-shasum -a 256 "$OUT/u-boot-sunxi-with-spl.bin" "$OUT/ums-readonly.scr" 2>/dev/null \
-  || sha256sum "$OUT/u-boot-sunxi-with-spl.bin" "$OUT/ums-readonly.scr"
+shasum -a 256 "$OUT/u-boot-sunxi-with-spl.bin" "$OUT/sunxi-spl-warmup.bin" "$OUT/ums-readonly.scr" 2>/dev/null \
+  || sha256sum "$OUT/u-boot-sunxi-with-spl.bin" "$OUT/sunxi-spl-warmup.bin" "$OUT/ums-readonly.scr"

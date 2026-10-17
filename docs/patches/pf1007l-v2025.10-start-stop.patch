@@ -1,0 +1,7 @@
+--- a/drivers/usb/gadget/f_mass_storage.c
++++ b/drivers/usb/gadget/f_mass_storage.c
+@@ -1326 +1326,3 @@
+-	common->eject = 1;
++	/* Only an unload request ejects; start and idle-stop keep UMS active. */
++	if ((common->cmnd[4] & 0x03) == 0x02)
++		common->eject = 1;

@@ -48,6 +48,74 @@ index 00000000..783593da
 +	/delete-property/ usb0_vbus-supply;
 +	/delete-property/ usb0_id_det-gpios;
 +};
+diff --git a/arch/arm/include/asm/arch-sunxi/sys_proto.h b/arch/arm/include/asm/arch-sunxi/sys_proto.h
+index 92c7721a..528d8bdb 100644
+--- a/arch/arm/include/asm/arch-sunxi/sys_proto.h
++++ b/arch/arm/include/asm/arch-sunxi/sys_proto.h
+@@ -21,6 +21,7 @@ void sdelay(unsigned long);
+  * @sp:		BROM stack pointer
+  */
+ void return_to_fel(uint32_t lr, uint32_t sp);
++void pf1007l_dram_warmup_return(void);
+ 
+ /* Board / SoC level designware gmac init */
+ #if !defined CONFIG_XPL_BUILD && defined CONFIG_SUN7I_GMAC
+diff --git a/arch/arm/mach-sunxi/board.c b/arch/arm/mach-sunxi/board.c
+index 432b1c10..5b407efa 100644
+--- a/arch/arm/mach-sunxi/board.c
++++ b/arch/arm/mach-sunxi/board.c
+@@ -42,6 +42,17 @@ struct fel_stash {
+ 
+ struct fel_stash fel_stash __section(".data");
+ 
++/*
++ * PF1007L warm-up SPL (built with -DPF1007L_DRAM_WARMUP): return to FEL
++ * right after DRAM init, before a failed cold init can hang().
++ */
++void pf1007l_dram_warmup_return(void)
++{
++#if defined(PF1007L_DRAM_WARMUP) && defined(CONFIG_XPL_BUILD)
++	return_to_fel(fel_stash.sp, fel_stash.lr);
++#endif
++}
++
+ #ifdef CONFIG_ARM64
+ #include <asm/armv8/mmu.h>
+ 
+diff --git a/arch/arm/mach-sunxi/dram_sun8i_a33.c b/arch/arm/mach-sunxi/dram_sun8i_a33.c
+index 0d08b6a4..0c852859 100644
+--- a/arch/arm/mach-sunxi/dram_sun8i_a33.c
++++ b/arch/arm/mach-sunxi/dram_sun8i_a33.c
+@@ -280,6 +280,17 @@ static int mctl_channel_init(struct dram_para *para)
+ 			return -EIO;
+ 	}
+ done:
++	/*
++	 * PF1007L: on some units byte lane 0 comes out of training disabled,
++	 * so every even byte reads back as zero. Mirror lane 1's config onto
++	 * it and retrain.
++	 */
++	if (para->bus_width == 16 && !(readl(DXnGCR0(0)) & 0x1)) {
++		writel(readl(DXnGCR0(1)), DXnGCR0(0));
++		if (mctl_train_dram(para) != 0)
++			return -EIO;
++	}
++
+ 	/* Check the dramc status */
+ 	mctl_await_completion(&mctl_ctl->statr, 0x1, 0x1);
+ 
+diff --git a/board/sunxi/board.c b/board/sunxi/board.c
+index 2929bc17..58858c19 100644
+--- a/board/sunxi/board.c
++++ b/board/sunxi/board.c
+@@ -637,6 +637,7 @@ void sunxi_board_init(void)
+ #endif	/* CONFIG_AXPxxx_POWER */
+ 	printf("DRAM:");
+ 	gd->ram_size = sunxi_dram_init();
++	pf1007l_dram_warmup_return();
+ 	printf(" %d MiB\n", (int)(gd->ram_size >> 20));
+ 	if (!gd->ram_size)
+ 		hang();
 diff --git a/cmd/usb_mass_storage.c b/cmd/usb_mass_storage.c
 index 47e8b70c..634a9263 100644
 --- a/cmd/usb_mass_storage.c

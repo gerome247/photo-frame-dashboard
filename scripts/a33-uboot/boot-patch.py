@@ -226,9 +226,13 @@ def main():
 mmc dev 1
 mmc read {ADDR['read_header']:#x} {header_sector:#x} {header_sectors:#x}
 mmc read {ADDR['read_ramdisk']:#x} {ramdisk_sector:#x} {ramdisk_sectors:#x}
+# Stop at the first failure: the header is written last, and only if the ramdisk write
+# succeeded and reads back byte-for-byte. The host's verify step then shows exactly which
+# range is wrong. A failed write still needs the restore procedure.
 if {' && '.join(checks)}; then
-  mmc write {ADDR[f'{write}_ramdisk']:#x} {ramdisk_sector:#x} {ramdisk_sectors:#x}
-  mmc write {ADDR[f'{write}_header']:#x} {header_sector:#x} {header_sectors:#x}
+  if mmc write {ADDR[f'{write}_ramdisk']:#x} {ramdisk_sector:#x} {ramdisk_sectors:#x} && mmc read {ADDR['read_ramdisk']:#x} {ramdisk_sector:#x} {ramdisk_sectors:#x} && cmp.b {ADDR[f'{write}_ramdisk']:#x} {ADDR['read_ramdisk']:#x} {slot:#x}; then
+    mmc write {ADDR[f'{write}_header']:#x} {header_sector:#x} {header_sectors:#x}
+  fi
 fi
 ums 0 mmc 1
 """

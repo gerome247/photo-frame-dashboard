@@ -1,0 +1,7 @@
+diff --git a/arch/arm/dts/sun8i-a33-pf1007l-backup.dts b/arch/arm/dts/sun8i-a33-pf1007l-backup.dts
+--- a/arch/arm/dts/sun8i-a33-pf1007l-backup.dts
++++ b/arch/arm/dts/sun8i-a33-pf1007l-backup.dts
+@@ -19 +19,2 @@
+-	bus-width = <8>;
++	bus-width = <4>;
++	max-frequency = <26000000>;
