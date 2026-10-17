@@ -164,6 +164,17 @@
   }
 
   // ------------------------------------------------------------ month (dots only)
+  // One dot per event in its people's colours: solid for one person, split into slices when
+  // shared (a whole-family event shows everyone's colour).
+  function monthDot(e) {
+    var ids = App.isFamily(e) ? D.people.map(function (p) { return p.id; }) : e.people;
+    var colors = ids.map(function (id) { return App.person(id).color; });
+    if (colors.length < 2) return '<i style="' + App.pstyle(App.evColor(e)) + '"></i>';
+    var step = 100 / colors.length;
+    return '<i class="is-shared" style="background:conic-gradient(' + colors.map(function (c, k) {
+      return c + ' ' + (k * step) + '% ' + ((k + 1) * step) + '%';
+    }).join(',') + ')"></i>';
+  }
   function monthView() {
     var now = App.now();
     var first = new Date(V.date.getFullYear(), V.date.getMonth(), 1);
@@ -172,7 +183,7 @@
     for (var i = 0; i < 42; i++) {
       var d = App.addDays(start, i);
       var evs = App.allDayOn(d).concat(App.timedOn(d));
-      var dots = evs.slice(0, 5).map(function (e) { return '<i style="' + App.pstyle(App.evColor(e)) + '"></i>'; }).join('');
+      var dots = evs.slice(0, 5).map(monthDot).join('');
       cells += '<button class="mo-cell' + (d.getMonth() !== first.getMonth() ? ' is-out' : '') + (App.sameDay(d, now) ? ' is-today' : '') + '" data-day="' + (+d) + '">' +
         '<span class="num">' + d.getDate() + '</span><span class="mo-dots">' + dots + (evs.length > 5 ? '<em>+' + (evs.length - 5) + '</em>' : '') + '</span></button>';
     }

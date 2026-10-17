@@ -140,7 +140,8 @@
 .mo-cell.is-out { opacity: .35; }
 .mo-cell.is-today { background: var(--ink); color: var(--paper); }
 .mo-dots { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
-.mo-dots i { width: 12px; height: 12px; border-radius: 50%; background: var(--c); }
+.mo-dots i { width: 14px; height: 14px; border-radius: 50%; background: var(--c); }
+.mo-dots i.is-shared { box-shadow: 0 0 0 1.5px var(--paper); }
 .mo-cell.is-today .mo-dots i[style*="--c:#111111"] { background: var(--paper); }
 .mo-dots em { font-style: normal; font-size: 13px; font-weight: 800; }
 
