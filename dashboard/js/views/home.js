@@ -125,8 +125,9 @@
 
   // Real home status when Hive / Spotify are connected (js/live.js), else Wes's demo.
   function status() {
-    var h = D.hive && D.hive.configured && D.hive.heating;
-    if (!h) return demoStatus();
+    if (!D.hive) return '<div class="label">Home</div><div class="h-st-row"><span>Loading…</span></div>'; // until js/live.js reports
+    var h = D.hive.configured && D.hive.heating;
+    if (!h) return D.hive.configured ? '<div class="label">Home</div><div class="h-st-row is-warn"><span>Can’t reach Hive</span></div>' : demoStatus();
     var rows = '<div class="h-st-row">' + App.icon('thermo', 24) + '<b class="num">' + (h.current == null ? '–' : h.current.toFixed(1)) + '°</b><span>' +
       (h.mode === 'OFF' ? 'heating off' : (h.working ? 'heating' : 'idle') + ' · set ' + h.target + '°') + '</span></div>';
     (D.hive.lights || []).forEach(function (l) {
