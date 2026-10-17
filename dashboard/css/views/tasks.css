@@ -68,3 +68,26 @@
 .ch-week-row .is-today i { box-shadow: inset 0 0 0 3px var(--ink); }
 .ch-week-row .is-today { color: var(--ink); }
 .ch-week-row .is-future i { opacity: .4; }
+
+/* New / Edit chores (js/views/tasks.js) */
+.t-actions { display: flex; gap: 10px; }
+.t-actions .btn { padding: 0 20px; }
+.ch-emoji .i { color: var(--ink); }
+.ch.is-editing { box-shadow: inset 0 0 0 2px var(--line); border-radius: 14px; }
+.ch-edit { margin-left: auto; color: var(--mute); display: grid; place-items: center; }
+.ch-sheet-label { display: flex; align-items: center; gap: 8px; }
+.sheet--tall { max-height: 784px; }
+.sheet-pad.ce { padding: 24px 32px 24px; }
+.ce .label { margin: 12px 0 6px; }
+.ce .big-input { height: 66px; font-size: 42px; margin: 0; }
+.ce-icons { display: grid; grid-auto-flow: column; grid-template-rows: repeat(2, 58px); grid-auto-columns: 58px; gap: 8px; overflow-x: auto; padding-bottom: 6px; }
+.ce-icon { width: 58px; height: 58px; border-radius: 14px; display: grid; place-items: center; background: var(--paper-2); color: var(--ink-2); }
+.ce-icon.is-on { background: var(--ink); color: var(--paper); }
+.ce .add-who { flex-wrap: wrap; }
+.ce .who-btn { min-width: 0; padding: 6px 12px; font-size: 15px; }
+.ce-days { display: flex; gap: 8px; align-items: center; }
+.ce-days button { width: 56px; height: 56px; padding: 0; display: grid; place-items: center; border-radius: 50%; background: var(--paper-2); font-size: 20px; font-weight: 800; }
+.ce-days button.is-on { background: var(--ink); color: var(--paper); }
+.ce-days .ce-every { width: auto; padding: 0 18px; border-radius: 999px; font-size: 15px; letter-spacing: .04em; margin-left: 8px; }
+.ce-foot { display: flex; justify-content: flex-end; gap: 12px; margin-top: 16px; }
+.ce-foot .ce-del { margin-right: auto; color: var(--alert); border-color: var(--alert); }

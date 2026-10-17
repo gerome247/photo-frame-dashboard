@@ -147,6 +147,100 @@ async function shopping(request, env) {
   return Response.json({ items: await shoppingList(db) }, { headers: { 'Cache-Control': 'private, no-store' } });
 }
 
+// ------------------------------------------------------------ chores
+// Chore definitions plus one "done" row per chore per day, so every chore resets at midnight
+// (the screen's own date, sent as ?day=YYYY-MM-DD). Stars are counted from the done rows.
+//   GET  /api/chores?from=YYYY-MM-DD&to=YYYY-MM-DD   -> { chores, done (in range), stars }
+//   POST /api/chores { upsert: [chore], delete: [id] } -> same as GET
+//   POST /api/chores/done { id, day, done, by?, earner?, stars? } -> same as GET
+// A chore: { id, title, icon, who, r, stars, days } (days: 7 chars, Mon..Sun, "1" = that day).
+
+let choreTables = false;
+async function choresTables(db) {
+  if (choreTables) return;
+  await db.batch([
+    db.prepare(`CREATE TABLE IF NOT EXISTS chores (
+      id TEXT PRIMARY KEY, title TEXT NOT NULL, icon TEXT NOT NULL, who TEXT NOT NULL, r TEXT NOT NULL,
+      stars INTEGER NOT NULL, days TEXT NOT NULL, created INTEGER NOT NULL, updated INTEGER NOT NULL)`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS chore_done (
+      chore_id TEXT NOT NULL, day TEXT NOT NULL, by TEXT, earner TEXT, stars INTEGER NOT NULL, at INTEGER NOT NULL,
+      PRIMARY KEY (chore_id, day))`),
+  ]);
+  choreTables = true;
+}
+
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+const WHO = /^[a-z0-9_-]{1,20}$/;
+function choreItem(c) {
+  if (!c || typeof c !== 'object' || !ID.test(c.id || '')) return null;
+  const title = text(c.title, 60);
+  if (!title || !/^[a-z0-9-]{1,40}$/.test(c.icon || '') || !WHO.test(c.who || '') || !['morning', 'after', 'evening'].includes(c.r)) return null;
+  const days = /^[01]{7}$/.test(c.days || '') ? c.days : '1111111';
+  return { id: c.id, title, icon: c.icon, who: c.who, r: c.r, stars: Math.min(5, Math.max(0, Math.round(Number(c.stars)) || 0)), days };
+}
+
+async function choresState(db, url) {
+  const from = url.searchParams.get('from'), to = url.searchParams.get('to');
+  const [defs, done, stars] = await Promise.all([
+    db.prepare('SELECT id, title, icon, who, r, stars, days FROM chores ORDER BY created, id').all(),
+    DAY.test(from || '') && DAY.test(to || '')
+      ? db.prepare('SELECT chore_id AS id, day, by, earner, stars FROM chore_done WHERE day >= ?1 AND day <= ?2').bind(from, to).all()
+      : { results: [] },
+    db.prepare('SELECT earner, SUM(stars) AS stars FROM chore_done WHERE earner IS NOT NULL GROUP BY earner').all(),
+  ]);
+  const totals = {};
+  stars.results.forEach((r) => { totals[r.earner] = r.stars; });
+  return { chores: defs.results, done: done.results, stars: totals };
+}
+
+async function chores(request, env, url) {
+  const db = env.SHOPPING;
+  if (!db) return Response.json({ error: 'no database' }, { status: 503 });
+  await choresTables(db);
+  if (request.method === 'POST') {
+    let b;
+    try {
+      b = await request.json();
+    } catch {
+      return Response.json({ error: 'bad JSON' }, { status: 400 });
+    }
+    const now = Date.now();
+    const stmts = [];
+    if (url.pathname === '/api/chores/done') {
+      if (!ID.test(b.id || '') || !DAY.test(b.day || '')) return Response.json({ error: 'bad done' }, { status: 400 });
+      if (b.done) {
+        const by = WHO.test(b.by || '') ? b.by : null, earner = WHO.test(b.earner || '') ? b.earner : null;
+        stmts.push(db.prepare(
+          `INSERT INTO chore_done (chore_id, day, by, earner, stars, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+           ON CONFLICT(chore_id, day) DO UPDATE SET by = ?3, earner = ?4, stars = ?5, at = ?6`,
+        ).bind(b.id, b.day, by, earner, earner ? Math.min(5, Math.max(0, Math.round(Number(b.stars)) || 0)) : 0, now));
+      } else {
+        stmts.push(db.prepare('DELETE FROM chore_done WHERE chore_id = ?1 AND day = ?2').bind(b.id, b.day));
+      }
+    } else {
+      const upsert = Array.isArray(b.upsert) ? b.upsert.slice(0, 200).map(choreItem) : [];
+      const del = Array.isArray(b.delete) ? b.delete.slice(0, 200) : [];
+      if (upsert.some((c) => !c) || del.some((id) => typeof id !== 'string' || !ID.test(id))) {
+        return Response.json({ error: 'bad chore' }, { status: 400 });
+      }
+      for (const c of upsert) {
+        stmts.push(db.prepare(
+          `INSERT INTO chores (id, title, icon, who, r, stars, days, created, updated) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
+           ON CONFLICT(id) DO UPDATE SET title = ?2, icon = ?3, who = ?4, r = ?5, stars = ?6, days = ?7, updated = ?8`,
+        ).bind(c.id, c.title, c.icon, c.who, c.r, c.stars, c.days, now));
+      }
+      for (const id of del) {
+        // Its past done rows stay, so stars already earned aren't taken away.
+        stmts.push(db.prepare('DELETE FROM chores WHERE id = ?1').bind(id));
+      }
+    }
+    if (stmts.length) await db.batch(stmts);
+  } else if (request.method !== 'GET') {
+    return new Response('Method not allowed', { status: 405 });
+  }
+  return Response.json(await choresState(db, url), { headers: { 'Cache-Control': 'private, no-store' } });
+}
+
 // ------------------------------------------------------------ Spotify
 // Remote control for one Spotify (Premium) account via the Web API: now playing, controls,
 // library, search, queue and devices. Music plays on the account's devices, not on the screen.
@@ -463,6 +557,7 @@ export default {
     }
 
     if (url.pathname === '/api/shopping') return shopping(request, env);
+    if (url.pathname === '/api/chores' || url.pathname === '/api/chores/done') return chores(request, env, url);
     if (url.pathname === '/api/spotify' || url.pathname.startsWith('/api/spotify/')) return spotify(request, env, url);
 
     const res = await env.ASSETS.fetch(request);

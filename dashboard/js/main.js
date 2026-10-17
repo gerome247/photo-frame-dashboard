@@ -3,6 +3,8 @@ import './icons.js';
 import './data.js';
 import { eventsFromCalendars } from './calendar-feed.js';
 import * as shopping from './shopping-store.js';
+import './chore-icons.js';
+import * as choresStore from './chores-store.js';
 
 // The demo events are fake; real ones come from the calendar feeds below.
 window.DATA.events = [];
@@ -39,6 +41,14 @@ await shopping.load().catch(function (err) {
   window.DATA.groceries = [];
 });
 window.DATA.shopping = shopping;
+
+// Real chores (D1, via the Worker). The demo chores are fake, so start empty if they can't load.
+await choresStore.load().catch(function (err) {
+  console.error('chores', err);
+  window.DATA.chores = [];
+  window.DATA.choreDefs = [];
+});
+window.DATA.choresStore = choresStore;
 setInterval(loadLive, 30 * 60 * 1000); // the home view redraws the weather at the top of each hour
 
 await import('./app.js');
@@ -57,3 +67,4 @@ await import('./views/ambient.js');
 await import('./diag.js');
 window.App.start();
 shopping.watch(function () { window.App.emit('shopping-remote'); window.App.emit('data'); });
+choresStore.watch(function () { window.App.emit('chores-remote'); window.App.emit('data'); });
