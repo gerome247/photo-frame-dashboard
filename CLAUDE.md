@@ -24,7 +24,7 @@ This repo is **public**. Nothing personal goes in a commit.
 | `dashboard/scripts/` | `deploy.mjs`, `build-photos.mjs`, `spotify-login.mjs`, `agents-push.mjs` |
 | `dashboard/local.config.example.json` | Template for the private `local.config.json` |
 
-Storage: one D1 database (binding `SHOPPING`, added at deploy time by `deploy.mjs` from `local.config.json` → gitignored `.wrangler.deploy.json`). Tables `shopping`, `chores`, `chore_done` (one row per chore per day), `kv` (agents numbers, rotated Spotify token). Tables are created on first use.
+Storage: one D1 database (binding `SHOPPING`, added at deploy time by `deploy.mjs` from `local.config.json` → gitignored `.wrangler.deploy.json`). Tables `shopping`, `chores`, `chore_ticks` (one row per chore, person and day), `kv` (agents numbers, rotated Spotify token). Tables are created on first use.
 
 ## Commands
 
