@@ -148,12 +148,14 @@ async function shopping(request, env) {
 }
 
 // ------------------------------------------------------------ Spotify
-// Now playing + play/pause/skip/volume for one Spotify (Premium) account, via the Web API.
+// Remote control for one Spotify (Premium) account via the Web API: now playing, controls,
+// library, search, queue and devices. Music plays on the account's devices, not on the screen.
 // Secrets: SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REFRESH_TOKEN, set by
 // scripts/spotify-login.mjs. If Spotify hands out a new refresh token it's kept in D1.
-//   GET  /api/spotify                          -> { configured, active, playing, title, ... }
-//   POST /api/spotify { action, volume? }      -> the same, after the command
-//        action: play | pause | next | previous | volume
+//   GET  /api/spotify                       -> player state { configured, active, playing, ... }
+//   GET  /api/spotify/list?kind=...         -> { items: [...] } (see spotifyList)
+//   GET  /api/spotify/art?u=<image url>     -> the image, from Spotify's CDN only
+//   POST /api/spotify { action, ... }       -> player state after the command (see spotifyCommand)
 
 let spotifyToken = null; // { value, expires }
 
@@ -190,15 +192,37 @@ async function spotifyAccess(env, force) {
 }
 
 // Calls the Web API, refreshing the access token once if it was rejected.
-async function spotifyApi(env, method, path) {
+async function spotifyApi(env, method, path, body) {
   for (let attempt = 0; attempt < 2; attempt++) {
-    const res = await fetch('https://api.spotify.com/v1' + path, {
-      method,
-      headers: { Authorization: 'Bearer ' + (await spotifyAccess(env, attempt > 0)) },
-    });
+    const headers = { Authorization: 'Bearer ' + (await spotifyAccess(env, attempt > 0)) };
+    if (body) headers['Content-Type'] = 'application/json';
+    const res = await fetch('https://api.spotify.com/v1' + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
     if (res.status !== 401) return res;
   }
   throw new Error('spotify unauthorised');
+}
+
+// Image URLs go through /api/spotify/art, so the frame's old trust store never has to reach
+// Spotify's CDN. Picks the image nearest `size` px.
+const ART_HOST = /^https:\/\/(i\.scdn\.co|mosaic\.scdn\.co|image-cdn-[a-z0-9-]+\.spotifycdn\.com|[a-z0-9-]+\.scdn\.co)\/[A-Za-z0-9/_.-]+$/;
+function art(images, size) {
+  if (!images || !images.length) return null;
+  const pick = images.slice().sort((a, b) => Math.abs((a.width || 300) - size) - Math.abs((b.width || 300) - size))[0];
+  return pick && ART_HOST.test(pick.url) ? '/api/spotify/art?u=' + encodeURIComponent(pick.url) : null;
+}
+
+const names = (list) => (list || []).map((a) => a.name).join(', ');
+
+function track(t) {
+  if (!t) return null;
+  return {
+    uri: t.uri,
+    name: t.name || '',
+    sub: t.artists ? names(t.artists) : (t.show || {}).name || '',
+    art: art((t.album || t.show || {}).images || t.images, 64),
+    duration: t.duration_ms || 0,
+    kind: t.type || 'track',
+  };
 }
 
 async function spotifyState(env) {
@@ -207,65 +231,190 @@ async function spotifyState(env) {
   if (!res.ok) throw new Error('spotify player ' + res.status);
   const p = await res.json();
   const item = p.item || {};
-  const images = (item.album || item.show || {}).images || [];
-  const art = images.length ? images[images.length > 1 ? 1 : 0].url : null; // ~300 px
+  const d = p.device || {};
   return {
     configured: true,
     active: true,
     playing: !!p.is_playing,
+    uri: item.uri || '',
     title: item.name || '',
-    artist: item.artists ? item.artists.map((a) => a.name).join(', ') : (item.show || {}).name || '',
+    artist: item.artists ? names(item.artists) : (item.show || {}).name || '',
     album: (item.album || {}).name || '',
-    art: art && /^https:\/\/i\.scdn\.co\/image\/[0-9a-f]+$/.test(art) ? '/api/spotify/art?id=' + art.split('/').pop() : null,
-    device: (p.device || {}).name || '',
-    volume: p.device && p.device.volume_percent != null ? p.device.volume_percent : null,
-    canVolume: !!(p.device && p.device.supports_volume !== false && p.device.volume_percent != null),
+    art: art((item.album || item.show || {}).images || item.images, 300),
+    artLarge: art((item.album || item.show || {}).images || item.images, 640),
+    context: (p.context || {}).uri || '',
+    device: d.name || '',
+    deviceId: d.id || '',
+    deviceType: d.type || '',
+    volume: d.volume_percent != null ? d.volume_percent : null,
+    canVolume: !!(d.supports_volume !== false && d.volume_percent != null),
+    shuffle: !!p.shuffle_state,
+    repeat: p.repeat_state || 'off',
     progress: p.progress_ms || 0,
     duration: item.duration_ms || 0,
   };
 }
 
-const SPOTIFY_ACTIONS = {
-  play: ['PUT', '/me/player/play'],
-  pause: ['PUT', '/me/player/pause'],
-  next: ['POST', '/me/player/next'],
-  previous: ['POST', '/me/player/previous'],
-};
+// Lists for the Spotify tab. kind: playlists | albums | liked | recent | queue | devices |
+// search (q) | playlist (id) | album (id) | artist (id).
+const SID = /^[A-Za-z0-9]{22}$/;
+async function spotifyList(env, url) {
+  const kind = url.searchParams.get('kind');
+  const id = url.searchParams.get('id') || '';
+  if (['playlist', 'album', 'artist'].includes(kind) && !SID.test(id)) return { error: 'bad id' };
+  const get = async (path) => {
+    const res = await spotifyApi(env, 'GET', path);
+    if (res.status === 403) throw Object.assign(new Error('scope'), { scope: true });
+    if (!res.ok) throw new Error('spotify ' + kind + ' ' + res.status);
+    return res.status === 204 ? {} : res.json();
+  };
+  // Development-mode apps get at most 10 items per request, so long lists come in pages.
+  const pages = async (path, max) => {
+    const sep = path.includes('?') ? '&' : '?';
+    let items = [];
+    for (let offset = 0; offset < max; offset += 10) {
+      const r = await get(path + sep + 'limit=10&offset=' + offset);
+      items = items.concat(r.items || []);
+      if (!r.next || !(r.items || []).length) break;
+    }
+    return { items };
+  };
+  const ctx = (o, sub) => o && { uri: o.uri, id: o.id, name: o.name || '', sub, art: art(o.images, 64), kind: o.type };
+  switch (kind) {
+    case 'playlists': {
+      const r = await pages('/me/playlists', 50);
+      return { items: (r.items || []).filter(Boolean).map((p) => ctx(p, ((p.items || p.tracks || {}).total || 0) + ' songs · ' + ((p.owner || {}).display_name || ''))) };
+    }
+    case 'albums': {
+      const r = await pages('/me/albums', 50);
+      return { items: (r.items || []).map((a) => ctx(a.album, names(a.album.artists))) };
+    }
+    case 'liked': {
+      const r = await pages('/me/tracks', 50);
+      return { items: (r.items || []).map((x) => track(x.track)).filter(Boolean) };
+    }
+    case 'recent': {
+      const r = await get('/me/player/recently-played?limit=10');
+      const seen = {};
+      return { items: (r.items || []).map((x) => track(x.track)).filter((t) => t && !seen[t.uri] && (seen[t.uri] = true)) };
+    }
+    case 'queue': {
+      const r = await get('/me/player/queue');
+      return { now: track(r.currently_playing), items: (r.queue || []).slice(0, 30).map(track).filter(Boolean) };
+    }
+    case 'devices': {
+      const r = await get('/me/player/devices');
+      return { items: (r.devices || []).map((d) => ({ id: d.id, name: d.name, type: d.type, active: d.is_active, restricted: d.is_restricted, volume: d.volume_percent })) };
+    }
+    case 'search': {
+      const q = (url.searchParams.get('q') || '').trim().slice(0, 100);
+      if (!q) return { tracks: [], artists: [], albums: [], playlists: [] };
+      const r = await get('/search?type=track,artist,album,playlist&limit=8&q=' + encodeURIComponent(q));
+      return {
+        tracks: ((r.tracks || {}).items || []).map(track).filter(Boolean),
+        artists: ((r.artists || {}).items || []).filter(Boolean).map((a) => ctx(a, 'Artist')),
+        albums: ((r.albums || {}).items || []).filter(Boolean).map((a) => ctx(a, names(a.artists))),
+        playlists: ((r.playlists || {}).items || []).filter(Boolean).map((p) => ctx(p, (p.owner || {}).display_name || 'Playlist')),
+      };
+    }
+    case 'playlist': {
+      const p = await get('/playlists/' + id + '?fields=uri,name,images,owner(display_name)');
+      const head = ctx({ ...p, type: 'playlist', id }, (p.owner || {}).display_name || '');
+      // Spotify only lets development-mode apps list the songs of playlists the user owns or
+      // collaborates on (403 otherwise); playing the whole playlist still works.
+      try {
+        const r = await pages('/playlists/' + id + '/items', 50);
+        return { head, items: r.items.map((x) => track(x.item || x.track)).filter((t) => t && t.uri) };
+      } catch (err) {
+        if (err.scope) return { head, items: [], note: 'Spotify only shows the songs in your own playlists here. Tap Play to play this one.' };
+        throw err;
+      }
+    }
+    case 'album': {
+      const a = await get('/albums/' + id);
+      const img = a.images;
+      return { head: ctx(a, names(a.artists)), items: ((a.tracks || {}).items || []).map((t) => ({ ...track(t), art: art(img, 64) })) };
+    }
+    case 'artist': {
+      // Top tracks are closed to development-mode apps, so an artist page lists their releases.
+      const [a, rel] = await Promise.all([get('/artists/' + id), pages('/artists/' + id + '/albums?include_groups=album,single', 30)]);
+      return { head: ctx(a, 'Artist'), items: (rel.items || []).filter(Boolean).map((x) => ctx(x, (x.album_type === 'single' ? 'Single' : 'Album') + (x.release_date ? ' · ' + x.release_date.slice(0, 4) : ''))) };
+    }
+    default:
+      return { error: 'bad kind' };
+  }
+}
+
+const URI = /^spotify:(track|episode|album|playlist|artist|show):[A-Za-z0-9]{22}$/;
+const DEVICE = /^[A-Za-z0-9]{1,64}$/;
+
+// POST bodies: { action: play | pause | next | previous | volume (volume) | seek (position) |
+// shuffle (state) | repeat (state) | queue (uri) | transfer (device) | playItem (context?, uris?, offset?) }
+function spotifyCommand(b) {
+  const dev = b.device && DEVICE.test(b.device) ? '?device_id=' + b.device : '';
+  switch (b.action) {
+    case 'play': return ['PUT', '/me/player/play' + dev];
+    case 'pause': return ['PUT', '/me/player/pause'];
+    case 'next': return ['POST', '/me/player/next'];
+    case 'previous': return ['POST', '/me/player/previous'];
+    case 'volume': {
+      const v = Math.round(Number(b.volume));
+      return v >= 0 && v <= 100 ? ['PUT', '/me/player/volume?volume_percent=' + v] : null;
+    }
+    case 'seek': {
+      const ms = Math.round(Number(b.position));
+      return ms >= 0 ? ['PUT', '/me/player/seek?position_ms=' + ms] : null;
+    }
+    case 'shuffle': return ['PUT', '/me/player/shuffle?state=' + (b.state ? 'true' : 'false')];
+    case 'repeat': return ['off', 'context', 'track'].includes(b.state) ? ['PUT', '/me/player/repeat?state=' + b.state] : null;
+    case 'queue': return URI.test(b.uri || '') ? ['POST', '/me/player/queue?uri=' + encodeURIComponent(b.uri)] : null;
+    case 'transfer': return DEVICE.test(b.device || '') ? ['PUT', '/me/player', { device_ids: [b.device], play: true }] : null;
+    case 'playItem': {
+      const body = {};
+      if (b.context) {
+        if (!URI.test(b.context)) return null;
+        body.context_uri = b.context;
+        if (b.offset) { if (!URI.test(b.offset)) return null; body.offset = { uri: b.offset }; }
+      } else if (Array.isArray(b.uris) && b.uris.length && b.uris.length <= 100 && b.uris.every((u) => URI.test(u))) {
+        body.uris = b.uris;
+        const i = Math.round(Number(b.position || 0));
+        if (i > 0 && i < b.uris.length) body.offset = { position: i };
+      } else return null;
+      return ['PUT', '/me/player/play' + dev, body];
+    }
+    default: return null;
+  }
+}
 
 async function spotify(request, env, url) {
-  if (!env.SPOTIFY_CLIENT_ID || !env.SPOTIFY_CLIENT_SECRET || !env.SPOTIFY_REFRESH_TOKEN) {
-    return Response.json({ configured: false }, { headers: { 'Cache-Control': 'private, no-store' } });
-  }
-  // Album art through the Worker, so the frame's old trust store never has to reach Spotify's CDN.
+  const json = (v, status) => Response.json(v, { status: status || 200, headers: { 'Cache-Control': 'private, no-store' } });
+  if (!env.SPOTIFY_CLIENT_ID || !env.SPOTIFY_CLIENT_SECRET || !env.SPOTIFY_REFRESH_TOKEN) return json({ configured: false });
   if (url.pathname === '/api/spotify/art') {
-    const id = url.searchParams.get('id') || '';
-    if (!/^[0-9a-f]{20,64}$/.test(id)) return new Response('Not found', { status: 404 });
-    const img = await fetch('https://i.scdn.co/image/' + id, { cf: { cacheTtl: 86400, cacheEverything: true } });
+    const u = url.searchParams.get('u') || '';
+    if (!ART_HOST.test(u)) return new Response('Not found', { status: 404 });
+    const img = await fetch(u, { cf: { cacheTtl: 86400, cacheEverything: true } });
     if (!img.ok) return new Response('Not found', { status: 404 });
-    return new Response(img.body, { headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=86400' } });
+    return new Response(img.body, { headers: { 'Content-Type': img.headers.get('Content-Type') || 'image/jpeg', 'Cache-Control': 'private, max-age=86400' } });
   }
   try {
+    if (url.pathname === '/api/spotify/list') return json(await spotifyList(env, url));
     if (request.method === 'POST') {
       const body = await request.json().catch(() => ({}));
-      let call = SPOTIFY_ACTIONS[body.action];
-      if (body.action === 'volume') {
-        const v = Math.round(Number(body.volume));
-        if (!(v >= 0 && v <= 100)) return Response.json({ error: 'bad volume' }, { status: 400 });
-        call = ['PUT', '/me/player/volume?volume_percent=' + v];
-      }
-      if (!call) return Response.json({ error: 'bad action' }, { status: 400 });
-      const res = await spotifyApi(env, call[0], call[1]);
-      if (res.status === 404) return Response.json({ error: 'Nothing is playing on any device' }, { status: 409 });
-      if (res.status === 403) return Response.json({ error: 'Spotify refused (Premium needed, or not allowed on this device)' }, { status: 409 });
+      const call = spotifyCommand(body);
+      if (!call) return json({ error: 'bad command' }, 400);
+      const res = await spotifyApi(env, call[0], call[1], call[2]);
+      if (res.status === 404) return json({ error: 'No active device. Start Spotify on a phone or speaker, or pick one under Devices.' }, 409);
+      if (res.status === 403) return json({ error: 'Spotify refused (Premium needed, or not allowed on this device)' }, 409);
       if (!res.ok && res.status !== 204) throw new Error('spotify ' + body.action + ' ' + res.status);
-      await new Promise((r) => setTimeout(r, 400)); // let Spotify catch up before reading the state
+      await new Promise((r) => setTimeout(r, 450)); // let Spotify catch up before reading the state
     } else if (request.method !== 'GET') {
       return new Response('Method not allowed', { status: 405 });
     }
-    return Response.json(await spotifyState(env), { headers: { 'Cache-Control': 'private, no-store' } });
+    return json(await spotifyState(env));
   } catch (err) {
+    if (err.scope) return json({ error: 'scope' }, 403);
     console.error('spotify', err.message);
-    return Response.json({ configured: true, error: 'Spotify unavailable' }, { status: 502 });
+    return json({ configured: true, error: 'Spotify unavailable' }, 502);
   }
 }
 
@@ -314,7 +463,7 @@ export default {
     }
 
     if (url.pathname === '/api/shopping') return shopping(request, env);
-    if (url.pathname === '/api/spotify' || url.pathname === '/api/spotify/art') return spotify(request, env, url);
+    if (url.pathname === '/api/spotify' || url.pathname.startsWith('/api/spotify/')) return spotify(request, env, url);
 
     const res = await env.ASSETS.fetch(request);
     const out = new Response(res.body, res);

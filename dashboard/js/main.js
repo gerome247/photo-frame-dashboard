@@ -52,6 +52,7 @@ await import('./views/shopping.js');
 await import('./views/photos.js');
 await import('./views/control.js');
 await import('./views/agents.js');
+await import('./views/spotify.js');
 await import('./views/ambient.js');
 await import('./diag.js');
 window.App.start();
