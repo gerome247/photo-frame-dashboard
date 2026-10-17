@@ -89,6 +89,12 @@
 .np-text b { font-size: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .np-text > span:last-child { font-size: 16px; color: var(--mute); }
 .np-btn { width: var(--tap); height: var(--tap); border-radius: 50%; background: var(--ink); color: var(--paper); display: grid; place-items: center; }
+.np-art--icon { display: grid; place-items: center; color: var(--mute); }
+.hc-media { flex-wrap: wrap; }
+.np-ctrls { display: flex; align-items: center; justify-content: center; gap: 28px; width: 100%; }
+.np-btn--ghost { background: transparent; color: var(--ink); }
+.np-vol { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: 15px; color: var(--mute); }
+.np-vol button { width: 34px; height: 34px; border-radius: 50%; border: 2px solid var(--line, #ccc); display: grid; place-items: center; color: var(--ink); }
 
 /* garage slide-to-confirm */
 .slide-confirm { position: relative; height: 88px; border-radius: 999px; background: var(--paper-2); overflow: hidden; touch-action: none; }

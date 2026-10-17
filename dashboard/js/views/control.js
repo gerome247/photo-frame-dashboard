@@ -65,7 +65,9 @@
     return '<button class="sum' + (lights.length ? ' sum--warm' : '') + '" data-sum="lights"><span class="label">Lights</span><b class="num">' + lights.length + '</b><small>on in ' + unique(lights.map(function (l) { return l.room; })).length + ' rooms</small></button>' +
       '<button class="sum' + (secure ? '' : ' sum--warn') + '" data-sum="security"><span class="label">Security</span><b class="num">' + (secure ? 'Locked' : unlocked.length + (garage.state !== 'closed' ? 1 : 0)) + '</b><small>' + (secure ? 'All doors + garage' : (garage.state !== 'closed' ? 'Garage ' + garage.state : '') + (unlocked.length ? (garage.state !== 'closed' ? ' · ' : '') + unlocked.map(function (u) { return u.name; }).join(', ') : '') + (secure ? '' : ' open')) + '</small></button>' +
       '<button class="sum" data-sum="climate"><span class="label">Climate</span><b class="num">' + c.current + '°</b><small>' + (c.mode === 'off' ? 'System off' : (c.set > c.current ? 'Heating' : c.set < c.current ? 'Cooling' : 'Holding') + ' to ' + c.set + '°') + '</small></button>' +
-      '<button class="sum" data-sum="media"><span class="label">Media</span><b class="num">' + (m.playing ? 'Playing' : 'Paused') + '</b><small>' + m.room + ' speaker</small></button>';
+      (V.sp && V.sp.configured
+        ? '<button class="sum" data-sum="media"><span class="label">Spotify</span><b class="num">' + (V.sp.active ? (V.sp.playing ? 'Playing' : 'Paused') : 'Off') + '</b><small>' + App.esc(V.sp.active ? V.sp.device : 'Nothing playing') + '</small></button>'
+        : '<button class="sum" data-sum="media"><span class="label">Media</span><b class="num">' + (m.playing ? 'Playing' : 'Paused') + '</b><small>' + m.room + ' speaker</small></button>');
   }
   function unique(a) { return a.filter(function (x, i) { return a.indexOf(x) === i; }); }
 
@@ -107,7 +109,43 @@
     }).join('') + '</div>';
   }
 
+  // ------------------------------------------------------------ Spotify (Worker /api/spotify)
+  // Real now-playing card when the Worker has a Spotify login, else Wes's demo card.
+  function spotifyCard() {
+    var s = V.sp;
+    if (s.error && !s.active) return '<div class="np-art np-art--icon">' + App.icon('music', 34) + '</div><div class="np-text"><span class="label">Spotify</span><b>Can’t reach Spotify</b><span>Trying again shortly</span></div>';
+    if (!s.active) return '<div class="np-art np-art--icon">' + App.icon('music', 34) + '</div><div class="np-text"><span class="label">Spotify</span><b>Nothing playing</b><span>Start music on a phone or speaker</span></div>';
+    return (s.art ? '<img class="np-art" src="' + s.art + '" alt="">' : '<div class="np-art np-art--icon">' + App.icon('music', 34) + '</div>') +
+      '<div class="np-text"><span class="label">' + App.esc(s.device || 'Spotify') + '</span><b>' + App.esc(s.title) + '</b><span>' + App.esc(s.artist) + '</span>' +
+      (s.canVolume ? '<span class="np-vol"><button data-spvol="-10" aria-label="Quieter">' + App.icon('minus', 20) + '</button><span class="num">' + s.volume + '%</span><button data-spvol="10" aria-label="Louder">' + App.icon('plus', 20) + '</button></span>' : '') +
+      '</div>' +
+      '<div class="np-ctrls"><button class="np-btn np-btn--ghost" data-sp="previous" aria-label="Previous">' + App.icon('left', 26) + '</button>' +
+      '<button class="np-btn" data-sp="' + (s.playing ? 'pause' : 'play') + '" aria-label="Play/Pause">' + App.icon(s.playing ? 'pause' : 'play', 30) + '</button>' +
+      '<button class="np-btn np-btn--ghost" data-sp="next" aria-label="Next">' + App.icon('right', 26) + '</button></div>';
+  }
+  function spotifyShow(state) {
+    if (!state) return;
+    V.sp = state;
+    if (V.el && App.current === 'control') { paintPart('.hc-media', media()); paintPart('.hc-sum', summary()); }
+  }
+  function spotifyFetch() {
+    return fetch('/api/spotify', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(spotifyShow).catch(function () {});
+  }
+  function spotifyCommand(body) {
+    if (V.spBusy) return;
+    V.spBusy = true;
+    fetch('/api/spotify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(function (r) { return r.json(); })
+      .then(function (s) {
+        V.spBusy = false;
+        if (s.error && s.configured === undefined) return App.toast(App.esc(s.error), { icon: 'music', ms: 4000 });
+        spotifyShow(s);
+      })
+      .catch(function () { V.spBusy = false; App.toast('Couldn’t reach Spotify', { icon: 'music', ms: 4000 }); });
+  }
+
   function media() {
+    if (V.sp && V.sp.configured) return spotifyCard();
     var m = D.media;
     return '<img class="np-art" src="' + App.img(m.seed, 160, 160) + '" alt="">' +
       '<div class="np-text"><span class="label">' + m.room + '</span><b>' + m.title + '</b><span>' + m.artist + '</span></div>' +
@@ -319,9 +357,20 @@
     }
     if ((t = e.target.closest('[data-tmode]'))) { D.climate.mode = t.dataset.tmode; return climateChanged(); }
     if ((t = e.target.closest('[data-cam]'))) return App.cameraSheet(D.cameras.filter(function (c) { return c.id === t.dataset.cam; })[0]);
+    if ((t = e.target.closest('[data-sp]'))) return spotifyCommand({ action: t.dataset.sp });
+    if ((t = e.target.closest('[data-spvol]'))) {
+      return spotifyCommand({ action: 'volume', volume: Math.max(0, Math.min(100, (V.sp.volume || 0) + +t.dataset.spvol)) });
+    }
     if ((t = e.target.closest('[data-play]'))) { D.media.playing = !D.media.playing; paintPart('.hc-media', media()); paintPart('.hc-sum', summary()); }
   }
   function climateChanged() { paintPart('.hc-climate', climate()); paintPart('.hc-sum', summary()); App.emit('data'); }
+
+  // Spotify is only asked while this view is on screen.
+  function spotifyPoll() {
+    clearInterval(V.spTimer);
+    spotifyFetch();
+    V.spTimer = setInterval(spotifyFetch, 5000);
+  }
 
   function camTimer() {
     clearInterval(V.camTimer);
@@ -344,8 +393,9 @@
       el.querySelector('.hc-cams').innerHTML = cams();
       paint();
       camTimer();
+      spotifyPoll();
     },
-    resume: function () { camTimer(); },
-    hide: function () { clearInterval(V.camTimer); }
+    resume: function () { camTimer(); spotifyPoll(); },
+    hide: function () { clearInterval(V.camTimer); clearInterval(V.spTimer); }
   });
 })();

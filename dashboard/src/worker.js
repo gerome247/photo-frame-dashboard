@@ -147,6 +147,128 @@ async function shopping(request, env) {
   return Response.json({ items: await shoppingList(db) }, { headers: { 'Cache-Control': 'private, no-store' } });
 }
 
+// ------------------------------------------------------------ Spotify
+// Now playing + play/pause/skip/volume for one Spotify (Premium) account, via the Web API.
+// Secrets: SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REFRESH_TOKEN, set by
+// scripts/spotify-login.mjs. If Spotify hands out a new refresh token it's kept in D1.
+//   GET  /api/spotify                          -> { configured, active, playing, title, ... }
+//   POST /api/spotify { action, volume? }      -> the same, after the command
+//        action: play | pause | next | previous | volume
+
+let spotifyToken = null; // { value, expires }
+
+async function kvGet(db, k) {
+  await db.prepare('CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v TEXT NOT NULL)').run();
+  const row = await db.prepare('SELECT v FROM kv WHERE k = ?1').bind(k).first();
+  return row ? row.v : null;
+}
+
+async function kvPut(db, k, v) {
+  await db.prepare('INSERT INTO kv (k, v) VALUES (?1, ?2) ON CONFLICT(k) DO UPDATE SET v = ?2').bind(k, v).run();
+}
+
+async function spotifyAccess(env, force) {
+  if (!force && spotifyToken && spotifyToken.expires > Date.now() + 60000) return spotifyToken.value;
+  // A rotated token is stored under a hash of the secret it replaced, so logging in again
+  // (a new SPOTIFY_REFRESH_TOKEN secret) always wins over an older stored one.
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(env.SPOTIFY_REFRESH_TOKEN));
+  const slot = 'spotify_refresh:' + [...new Uint8Array(digest)].slice(0, 8).map((b) => b.toString(16).padStart(2, '0')).join('');
+  const refresh = (env.SHOPPING && (await kvGet(env.SHOPPING, slot))) || env.SPOTIFY_REFRESH_TOKEN;
+  const res = await fetch('https://accounts.spotify.com/api/token', {
+    method: 'POST',
+    headers: {
+      Authorization: 'Basic ' + btoa(env.SPOTIFY_CLIENT_ID + ':' + env.SPOTIFY_CLIENT_SECRET),
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refresh }),
+  });
+  if (!res.ok) throw new Error('spotify token ' + res.status);
+  const t = await res.json();
+  if (t.refresh_token && t.refresh_token !== refresh && env.SHOPPING) await kvPut(env.SHOPPING, slot, t.refresh_token);
+  spotifyToken = { value: t.access_token, expires: Date.now() + t.expires_in * 1000 };
+  return spotifyToken.value;
+}
+
+// Calls the Web API, refreshing the access token once if it was rejected.
+async function spotifyApi(env, method, path) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await fetch('https://api.spotify.com/v1' + path, {
+      method,
+      headers: { Authorization: 'Bearer ' + (await spotifyAccess(env, attempt > 0)) },
+    });
+    if (res.status !== 401) return res;
+  }
+  throw new Error('spotify unauthorised');
+}
+
+async function spotifyState(env) {
+  const res = await spotifyApi(env, 'GET', '/me/player?additional_types=episode');
+  if (res.status === 204) return { configured: true, active: false };
+  if (!res.ok) throw new Error('spotify player ' + res.status);
+  const p = await res.json();
+  const item = p.item || {};
+  const images = (item.album || item.show || {}).images || [];
+  const art = images.length ? images[images.length > 1 ? 1 : 0].url : null; // ~300 px
+  return {
+    configured: true,
+    active: true,
+    playing: !!p.is_playing,
+    title: item.name || '',
+    artist: item.artists ? item.artists.map((a) => a.name).join(', ') : (item.show || {}).name || '',
+    album: (item.album || {}).name || '',
+    art: art && /^https:\/\/i\.scdn\.co\/image\/[0-9a-f]+$/.test(art) ? '/api/spotify/art?id=' + art.split('/').pop() : null,
+    device: (p.device || {}).name || '',
+    volume: p.device && p.device.volume_percent != null ? p.device.volume_percent : null,
+    canVolume: !!(p.device && p.device.supports_volume !== false && p.device.volume_percent != null),
+    progress: p.progress_ms || 0,
+    duration: item.duration_ms || 0,
+  };
+}
+
+const SPOTIFY_ACTIONS = {
+  play: ['PUT', '/me/player/play'],
+  pause: ['PUT', '/me/player/pause'],
+  next: ['POST', '/me/player/next'],
+  previous: ['POST', '/me/player/previous'],
+};
+
+async function spotify(request, env, url) {
+  if (!env.SPOTIFY_CLIENT_ID || !env.SPOTIFY_CLIENT_SECRET || !env.SPOTIFY_REFRESH_TOKEN) {
+    return Response.json({ configured: false }, { headers: { 'Cache-Control': 'private, no-store' } });
+  }
+  // Album art through the Worker, so the frame's old trust store never has to reach Spotify's CDN.
+  if (url.pathname === '/api/spotify/art') {
+    const id = url.searchParams.get('id') || '';
+    if (!/^[0-9a-f]{20,64}$/.test(id)) return new Response('Not found', { status: 404 });
+    const img = await fetch('https://i.scdn.co/image/' + id, { cf: { cacheTtl: 86400, cacheEverything: true } });
+    if (!img.ok) return new Response('Not found', { status: 404 });
+    return new Response(img.body, { headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=86400' } });
+  }
+  try {
+    if (request.method === 'POST') {
+      const body = await request.json().catch(() => ({}));
+      let call = SPOTIFY_ACTIONS[body.action];
+      if (body.action === 'volume') {
+        const v = Math.round(Number(body.volume));
+        if (!(v >= 0 && v <= 100)) return Response.json({ error: 'bad volume' }, { status: 400 });
+        call = ['PUT', '/me/player/volume?volume_percent=' + v];
+      }
+      if (!call) return Response.json({ error: 'bad action' }, { status: 400 });
+      const res = await spotifyApi(env, call[0], call[1]);
+      if (res.status === 404) return Response.json({ error: 'Nothing is playing on any device' }, { status: 409 });
+      if (res.status === 403) return Response.json({ error: 'Spotify refused (Premium needed, or not allowed on this device)' }, { status: 409 });
+      if (!res.ok && res.status !== 204) throw new Error('spotify ' + body.action + ' ' + res.status);
+      await new Promise((r) => setTimeout(r, 400)); // let Spotify catch up before reading the state
+    } else if (request.method !== 'GET') {
+      return new Response('Method not allowed', { status: 405 });
+    }
+    return Response.json(await spotifyState(env), { headers: { 'Cache-Control': 'private, no-store' } });
+  } catch (err) {
+    console.error('spotify', err.message);
+    return Response.json({ configured: true, error: 'Spotify unavailable' }, { status: 502 });
+  }
+}
+
 function cookieValue(request) {
   const header = request.headers.get('Cookie') || '';
   for (const part of header.split(';')) {
@@ -192,6 +314,7 @@ export default {
     }
 
     if (url.pathname === '/api/shopping') return shopping(request, env);
+    if (url.pathname === '/api/spotify' || url.pathname === '/api/spotify/art') return spotify(request, env, url);
 
     const res = await env.ASSETS.fetch(request);
     const out = new Response(res.body, res);
