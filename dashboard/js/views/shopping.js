@@ -123,7 +123,9 @@
   }
   function render() {
     V.el.innerHTML = '<div class="shop">' +
-      '<header class="s-head"><div><div class="label">Shared list</div><h1 class="serif">Groceries</h1></div><div class="s-count"></div><div class="seg s-stores"></div></header>' +
+      '<header class="s-head"><div><div class="label">Shared list</div><h1 class="serif">Groceries</h1></div><div class="s-count"></div>' +
+      (window.PrintList && PrintList.canPrint() ? '<button class="btn s-print" data-print>' + App.icon('print', 26) + ' Print</button>' : '') +
+      '<div class="seg s-stores"></div></header>' +
       '<div class="s-list"></div>' +
       '<aside class="s-side">' +
       '  <div class="s-add">' +
@@ -214,6 +216,7 @@
       refreshSuggestFor(q);
       return;
     }
+    if ((t = e.target.closest('[data-print]'))) return PrintList.print();
     if ((t = e.target.closest('[data-add]'))) return add(t.dataset.add);
     if ((t = e.target.closest('[data-store]'))) { V.store = t.dataset.store; return paintList(); }
     if ((t = e.target.closest('[data-drawer]'))) { V.drawer = !V.drawer; return paintList(); }

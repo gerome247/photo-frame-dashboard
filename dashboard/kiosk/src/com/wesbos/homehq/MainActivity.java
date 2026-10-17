@@ -18,12 +18,14 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
+import android.util.Base64;
 import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -72,6 +74,8 @@ public class MainActivity extends Activity {
   private boolean pageFailed;
   private LinearLayout offline;
   private TextView offlineTitle, offlineText;
+  // Host of the page on screen, kept for the print bridge (which runs off the UI thread).
+  private volatile String pageHost;
 
   private final Runnable retry = new Runnable() {
     @Override
@@ -148,6 +152,7 @@ public class MainActivity extends Activity {
       @Override
       public void onPageStarted(WebView view, String url, Bitmap icon) {
         pageFailed = false;
+        pageHost = Uri.parse(url).getHost();
       }
 
       @Override
@@ -176,6 +181,7 @@ public class MainActivity extends Activity {
         handler.postDelayed(retry, RETRY_MS);
       }
     });
+    web.addJavascriptInterface(new PrintBridge(), "HomeHQ");
     FrameLayout root = new FrameLayout(this);
     root.addView(web);
     root.addView(buildOffline());
@@ -388,6 +394,52 @@ public class MainActivity extends Activity {
       return;
     }
     startActivity(new Intent(Settings.ACTION_SETTINGS));
+  }
+
+  /**
+   * window.HomeHQ in the page: printJpeg(base64, jobName) sends one page to the network printer
+   * (IppPrinter) and calls window.HomeHQPrinted(error) when done, with error null on success.
+   * Only the dashboard's own host may print, not other pages opened in the kiosk.
+   */
+  final class PrintBridge {
+    @JavascriptInterface
+    public boolean canPrint() {
+      return isDashboard();
+    }
+
+    @JavascriptInterface
+    public void printJpeg(final String base64, final String jobName) {
+      if (!isDashboard()) {
+        Log.w(TAG, "Print refused for " + pageHost);
+        return;
+      }
+      new Thread(() -> {
+        String error;
+        try {
+          error = new IppPrinter(MainActivity.this).print(Base64.decode(base64, Base64.DEFAULT), jobName);
+        } catch (RuntimeException e) {
+          Log.w(TAG, "Print failed", e);
+          error = "Couldn't print";
+        }
+        final String js = "window.HomeHQPrinted && window.HomeHQPrinted(" + (error == null ? "null" : quote(error)) + ")";
+        runOnUiThread(() -> web.evaluateJavascript(js, null));
+      }, "print").start();
+    }
+
+    private boolean isDashboard() {
+      String host = pageHost;
+      return host != null && (host.equals(Uri.parse(DEFAULT_URL).getHost()) || host.equals(Uri.parse(savedUrl()).getHost()));
+    }
+  }
+
+  private static String quote(String s) {
+    StringBuilder b = new StringBuilder("\"");
+    for (char c : s.toCharArray()) {
+      if (c == '"' || c == '\\') b.append('\\').append(c);
+      else if (c < 0x20 || c > 0x7e) b.append(String.format("\\u%04x", (int) c));
+      else b.append(c);
+    }
+    return b.append('"').toString();
   }
 
   @Override

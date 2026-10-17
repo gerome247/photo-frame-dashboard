@@ -47,6 +47,7 @@ await import('./slideshow.js');
 await import('./views/home.js');
 await import('./views/calendar.js');
 await import('./views/tasks.js');
+await import('./print-list.js');
 await import('./views/shopping.js');
 await import('./views/photos.js');
 await import('./views/control.js');
