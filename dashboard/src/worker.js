@@ -61,6 +61,8 @@ async function getWeather(env) {
 }
 
 // CALENDARS secret: one "person = secret iCal URL" per line (copy of dashboard/.calendars).
+// Google ("Secret address in iCal format") and Apple iCloud (Public Calendar link) both work,
+// and a person may have several lines.
 // The raw ICS text is passed through and parsed on the tablet: parsing costs ~80 ms CPU per
 // calendar, well over the free plan's 10 ms per request.
 async function getCalendars(env) {
@@ -68,7 +70,8 @@ async function getCalendars(env) {
   return Promise.all(
     lines.map(async (line) => {
       const who = line.slice(0, line.indexOf('=')).trim().toLowerCase();
-      const url = line.slice(line.indexOf('=') + 1).trim();
+      // Apple shares calendars as webcal://; it's plain https underneath.
+      const url = line.slice(line.indexOf('=') + 1).trim().replace(/^webcals?:\/\//i, 'https://');
       try {
         const res = await fetch(url);
         if (!res.ok) throw new Error('HTTP ' + res.status);
