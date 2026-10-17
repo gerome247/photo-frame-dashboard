@@ -26,3 +26,6 @@ scripts/si006-webview-overlay/build/
 /dashboard/public/photos/
 /dashboard/local.config.json
 /dashboard/.wrangler.deploy.json
+
+# Private notes for Claude Code (see CLAUDE.md)
+/CLAUDE.local.md
