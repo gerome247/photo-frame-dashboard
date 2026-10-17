@@ -9,6 +9,7 @@
   // Optimistic device update: flip immediately, confirm (or revert) shortly after.
   App.setDevice = function (id, patch, opts) {
     var d = dev(id), before = {};
+    if (d.hive) return hiveLight(d, patch);
     Object.keys(patch).forEach(function (k) { before[k] = d[k]; d[k] = patch[k]; });
     V.pending[id] = true;
     changed([id]);
@@ -64,7 +65,9 @@
     var c = D.climate, m = D.media;
     return '<button class="sum' + (lights.length ? ' sum--warm' : '') + '" data-sum="lights"><span class="label">Lights</span><b class="num">' + lights.length + '</b><small>on in ' + unique(lights.map(function (l) { return l.room; })).length + ' rooms</small></button>' +
       '<button class="sum' + (secure ? '' : ' sum--warn') + '" data-sum="security"><span class="label">Security</span><b class="num">' + (secure ? 'Locked' : unlocked.length + (garage.state !== 'closed' ? 1 : 0)) + '</b><small>' + (secure ? 'All doors + garage' : (garage.state !== 'closed' ? 'Garage ' + garage.state : '') + (unlocked.length ? (garage.state !== 'closed' ? ' · ' : '') + unlocked.map(function (u) { return u.name; }).join(', ') : '') + (secure ? '' : ' open')) + '</small></button>' +
-      '<button class="sum" data-sum="climate"><span class="label">Climate</span><b class="num">' + c.current + '°</b><small>' + (c.mode === 'off' ? 'System off' : (c.set > c.current ? 'Heating' : c.set < c.current ? 'Cooling' : 'Holding') + ' to ' + c.set + '°') + '</small></button>' +
+      (hiveOn() ? '<button class="sum" data-sum="climate"><span class="label">Heating</span><b class="num">' + (V.hive.heating.current == null ? '–' : V.hive.heating.current.toFixed(1)) + '°</b><small>' +
+        (V.hive.heating.mode === 'OFF' ? 'Off' : (V.hive.heating.working ? 'Heating' : 'Idle') + ' · set ' + V.hive.heating.target + '°') + '</small></button>' :
+      '<button class="sum" data-sum="climate"><span class="label">Climate</span><b class="num">' + c.current + '°</b><small>' + (c.mode === 'off' ? 'System off' : (c.set > c.current ? 'Heating' : c.set < c.current ? 'Cooling' : 'Holding') + ' to ' + c.set + '°') + '</small></button>') +
       (V.sp && V.sp.configured
         ? '<button class="sum" data-sum="media"><span class="label">Spotify</span><b class="num">' + (V.sp.active ? (V.sp.playing ? 'Playing' : 'Paused') : 'Off') + '</b><small>' + App.esc(V.sp.active ? V.sp.device : 'Nothing playing') + '</small></button>'
         : '<button class="sum" data-sum="media"><span class="label">Media</span><b class="num">' + (m.playing ? 'Playing' : 'Paused') + '</b><small>' + m.room + ' speaker</small></button>');
@@ -90,7 +93,86 @@
     }).join('');
   }
 
+  // ------------------------------------------------------------ Hive (Worker /api/hive)
+  // With a Hive login the climate card is the real thermostat and Hive lights get a room;
+  // without one, Wes's demo stays.
+  function hiveOn() { return V.hive && V.hive.configured && V.hive.heating; }
+  function hiveClimate() {
+    var h = V.hive.heating, w = V.hive.hotwater, t = V.hiveTarget != null ? V.hiveTarget : h.target;
+    var verb = h.mode === 'OFF' ? 'Off' : h.working ? 'Heating' : 'Idle';
+    var boosting = h.mode === 'BOOST';
+    return '<div class="label label--light">Heating · Hive' + (h.online ? '' : ' · offline') + '</div>' +
+      '<div class="th-main"><button class="th-btn" data-htemp="-0.5" aria-label="Cooler">' + App.icon('minus', 36) + '</button>' +
+      '<div class="th-set"><span class="num">' + (t == null ? '–' : String(t).replace('.0', '')) + '°</span><small>' + (boosting ? 'Boost · ' + h.boost + ' min left' : h.mode === 'SCHEDULE' ? 'Set by schedule' : 'Set to') + '</small></div>' +
+      '<button class="th-btn" data-htemp="0.5" aria-label="Warmer">' + App.icon('plus', 36) + '</button></div>' +
+      '<div class="th-now"><span><b class="num">' + (h.current == null ? '–' : h.current.toFixed(1)) + '°</b> inside</span><span class="th-verb th-verb--' + verb.toLowerCase() + '">' + verb + '</span>' +
+      (w ? '<span>Hot water <b>' + (w.mode === 'BOOST' ? 'Boost' : w.mode === 'MANUAL' ? 'On' : w.mode === 'OFF' ? 'Off' : 'Schedule') + '</b></span>' : '<span class="th-src">Live from Hive</span>') + '</div>' +
+      '<div class="th-row"><div class="seg seg--dark">' + [['SCHEDULE', 'Schedule'], ['MANUAL', 'Manual'], ['OFF', 'Off']].map(function (m) {
+        return '<button class="' + (h.mode === m[0] ? 'is-on' : '') + '" data-hmode="' + m[0] + '">' + m[1] + '</button>';
+      }).join('') + '</div>' +
+      '<button class="th-boost' + (boosting ? ' is-on' : '') + '" data-hboost>' + (boosting ? 'Cancel boost' : 'Boost 1h') + '</button></div>';
+  }
+  function hiveError() {
+    var e = V.hive.error;
+    return '<div class="label label--light">Heating · Hive</div><div class="th-msg">' + (e === 'login'
+      ? '<b>Hive needs you to log in again</b><span>Run <code>hive-login.py</code> on the PC.</span>'
+      : '<b>Can’t reach Hive right now</b><span>The Hive app still works. Trying again shortly.</span>') + '</div>';
+  }
+  function hiveShow(state) {
+    if (!state) return;
+    if (state.error && V.hive && V.hive.heating && state.error !== 'login') { V.hive.stale = true; return; } // keep the last good state
+    V.hive = state;
+    V.hiveTarget = null;
+    hiveDevices();
+    if (V.el && App.current === 'control') paint();
+  }
+  function hiveFetch() {
+    return fetch('/api/hive', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(hiveShow).catch(function () {});
+  }
+  function hiveSend(body) {
+    return fetch('/api/hive', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(function (r) { return r.json(); })
+      .then(function (s) {
+        if (s.error) App.toast(s.error === 'login' ? 'Hive needs you to log in again' : 'Couldn’t reach Hive', { icon: 'thermo', ms: 4000 });
+        hiveShow(s);
+      })
+      .catch(function () { App.toast('Couldn’t reach Hive', { icon: 'thermo', ms: 4000 }); });
+  }
+  // Hive lights as tiles in a "Hive" room at the top.
+  function hiveDevices() {
+    D.devices = D.devices.filter(function (d) { return !d.hive; });
+    D.rooms = D.rooms.filter(function (r) { return r.id !== 'hive'; });
+    var lights = (V.hive && V.hive.lights) || [];
+    if (!lights.length) return;
+    D.rooms.unshift({ id: 'hive', name: 'Hive' });
+    lights.forEach(function (l) {
+      D.devices.unshift({ id: 'hive-' + l.id, hive: true, hiveId: l.id, hiveType: l.type, room: 'hive', type: 'light', name: l.name, on: l.on, level: l.brightness || 100, flaky: !l.online });
+    });
+  }
+  function hiveLight(d, patch) {
+    Object.keys(patch).forEach(function (k) { d[k] = patch[k]; });
+    V.pending[d.id] = true;
+    changed([d.id]);
+    hiveSend({ action: 'light', id: d.hiveId, type: d.hiveType, on: d.on, brightness: d.on ? Math.max(5, d.level) : null })
+      .then(function () { delete V.pending[d.id]; if (dev(d.id)) changed([d.id]); });
+  }
+  // − / + taps gather for a moment, then one change goes to Hive.
+  function hiveTemp(step) {
+    var h = V.hive.heating;
+    V.hiveTarget = Math.max(h.min, Math.min(h.max, (V.hiveTarget != null ? V.hiveTarget : h.target || 20) + step));
+    paintPart('.hc-climate', climate());
+    clearTimeout(V.hiveTimer);
+    V.hiveTimer = setTimeout(function () { hiveSend({ action: 'target', id: h.id, target: V.hiveTarget }); }, 900);
+  }
+  function hivePoll() {
+    clearInterval(V.hivePollTimer);
+    hiveFetch();
+    V.hivePollTimer = setInterval(hiveFetch, 60000);
+  }
+
   function climate() {
+    if (V.hive && V.hive.configured && V.hive.error && !V.hive.heating) return hiveError();
+    if (hiveOn()) return hiveClimate();
     var c = D.climate;
     var verb = c.mode === 'off' ? 'Off' : c.set > c.current ? 'Heating' : c.set < c.current ? 'Cooling' : 'Holding';
     return '<div class="label label--light">Climate · Main floor</div>' +
@@ -350,6 +432,13 @@
       target.classList.add('is-pulse'); setTimeout(function () { target.classList.remove('is-pulse'); }, 900);
       return;
     }
+    if ((t = e.target.closest('[data-htemp]'))) return hiveTemp(+t.dataset.htemp);
+    if ((t = e.target.closest('[data-hmode]'))) return hiveSend({ action: 'heatMode', id: V.hive.heating.id, mode: t.dataset.hmode });
+    if (e.target.closest('[data-hboost]')) {
+      var hh = V.hive.heating;
+      if (hh.mode === 'BOOST') return hiveSend({ action: 'cancelBoost', id: hh.id });
+      return hiveSend({ action: 'heatBoost', id: hh.id, minutes: 60, target: Math.max(21, hh.target || 0) });
+    }
     if ((t = e.target.closest('[data-temp]'))) {
       D.climate.set = Math.max(15, Math.min(28, D.climate.set + +t.dataset.temp));
       if (D.climate.mode === 'off') D.climate.mode = 'heat';
@@ -393,9 +482,9 @@
       el.querySelector('.hc-cams').innerHTML = cams();
       paint();
       camTimer();
-      spotifyPoll();
+      if (App.current === 'control') { spotifyPoll(); hivePoll(); }
     },
-    resume: function () { camTimer(); spotifyPoll(); },
-    hide: function () { clearInterval(V.camTimer); clearInterval(V.spTimer); }
+    resume: function () { camTimer(); spotifyPoll(); hivePoll(); },
+    hide: function () { clearInterval(V.camTimer); clearInterval(V.spTimer); clearInterval(V.hivePollTimer); }
   });
 })();

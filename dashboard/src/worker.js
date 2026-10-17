@@ -296,6 +296,135 @@ async function agents(request, env) {
   return Response.json({ ...(stored ? JSON.parse(stored) : { agents: [] }), status }, { headers: { 'Cache-Control': 'private, no-store' } });
 }
 
+// ------------------------------------------------------------ Hive (heating, hot water, lights)
+// Hive has no official API; this is the one the Hive app uses (as Home Assistant does). Secrets
+// from scripts/hive-login.py: HIVE_CLIENT_ID, HIVE_REGION, HIVE_REFRESH_TOKEN, HIVE_DEVICE_KEY.
+// The Worker swaps the refresh token for a short-lived IdToken with Cognito; no password here.
+// Hive's firewall (AWS WAF) blocks requests without a User-Agent, so every call sends one.
+//   GET  /api/hive                      -> { configured, heating, hotwater, lights }
+//   POST /api/hive { action, id, ... }  -> the same, after the change (see hiveCommand)
+
+const HIVE_API = 'https://beekeeper-uk.hivehome.com/1.0';
+let hiveToken = null; // { value, expires }
+
+async function hiveAccess(env, force) {
+  if (!force && hiveToken && hiveToken.expires > Date.now() + 60000) return hiveToken.value;
+  const slot = 'hive_refresh';
+  const stored = env.SHOPPING ? await kvGet(env.SHOPPING, slot) : null;
+  // A refresh token saved by an earlier run wins only while it came from the current login.
+  const saved = stored ? JSON.parse(stored) : null;
+  const refresh = saved && saved.from === env.HIVE_REFRESH_TOKEN.slice(-16) ? saved.token : env.HIVE_REFRESH_TOKEN;
+  const params = { REFRESH_TOKEN: refresh };
+  if (env.HIVE_DEVICE_KEY) params.DEVICE_KEY = env.HIVE_DEVICE_KEY;
+  const res = await fetch('https://cognito-idp.' + env.HIVE_REGION + '.amazonaws.com/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-amz-json-1.1', 'X-Amz-Target': 'AWSCognitoIdentityProviderService.InitiateAuth', 'User-Agent': 'home-dashboard/1.0 (Cloudflare Worker)' },
+    body: JSON.stringify({ AuthFlow: 'REFRESH_TOKEN_AUTH', ClientId: env.HIVE_CLIENT_ID, AuthParameters: params }),
+  });
+  if (!res.ok) throw Object.assign(new Error('hive token ' + res.status + ' ' + (await res.text()).slice(0, 160)), { login: res.status === 400 });
+  const r = (await res.json()).AuthenticationResult || {};
+  if (r.RefreshToken && env.SHOPPING) await kvPut(env.SHOPPING, slot, JSON.stringify({ from: env.HIVE_REFRESH_TOKEN.slice(-16), token: r.RefreshToken }));
+  hiveToken = { value: r.IdToken, expires: Date.now() + (r.ExpiresIn || 3600) * 1000 };
+  return hiveToken.value;
+}
+
+async function hiveApi(env, method, path, body) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await fetch(HIVE_API + path, {
+      method,
+      headers: { 'Content-Type': 'application/json', Accept: '*/*', 'User-Agent': 'home-dashboard/1.0 (Cloudflare Worker)', authorization: await hiveAccess(env, attempt > 0) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (res.status !== 401 && res.status !== 403) return res;
+  }
+  throw Object.assign(new Error('hive unauthorised'), { login: true });
+}
+
+const num = (v) => (v == null || v === '' || isNaN(Number(v)) ? null : Number(v));
+async function hiveState(env) {
+  const res = await hiveApi(env, 'GET', '/nodes/all?products=true&devices=true&actions=false');
+  if (!res.ok) throw new Error('hive nodes ' + res.status);
+  const all = await res.json();
+  const products = all.products || [];
+  const heat = products.find((p) => p.type === 'heating');
+  const water = products.find((p) => p.type === 'hotwater');
+  const h = heat && { id: heat.id, name: heat.state.name, current: num(heat.props.temperature), target: num(heat.state.target),
+    mode: heat.state.mode, boost: num(heat.state.boost), working: !!heat.props.working, online: heat.props.online !== false,
+    min: num(heat.props.minHeat) || 5, max: num(heat.props.maxHeat) || 32 };
+  return {
+    configured: true,
+    heating: h || null,
+    hotwater: water ? { id: water.id, mode: water.state.mode, boost: num(water.state.boost), working: !!water.props.working } : null,
+    lights: products.filter((p) => /light$/.test(p.type)).map((p) => ({
+      id: p.id, type: p.type, name: p.state.name, on: p.state.status === 'ON', brightness: num(p.state.brightness), online: p.props.online !== false,
+    })),
+  };
+}
+
+// Commands, as the Hive app sends them (values as strings). Only ids of this account's devices.
+const HIVE_ID = /^[0-9a-f-]{36}$/;
+function hiveCommand(b) {
+  const id = String(b.id || '');
+  if (!HIVE_ID.test(id)) return null;
+  switch (b.action) {
+    case 'target': {
+      const t = Math.round(Number(b.target) * 2) / 2;
+      return t >= 5 && t <= 32 ? ['heating', id, { target: t.toFixed(1) }] : null;
+    }
+    case 'heatMode': return ['SCHEDULE', 'MANUAL', 'OFF'].includes(b.mode) ? ['heating', id, { mode: b.mode }] : null;
+    case 'heatBoost': {
+      const m = Math.round(Number(b.minutes)), t = Math.round(Number(b.target) * 2) / 2;
+      return m >= 15 && m <= 360 && t >= 5 && t <= 32 ? ['heating', id, { mode: 'BOOST', boost: String(m), target: t.toFixed(1) }] : null;
+    }
+    case 'waterMode': return ['SCHEDULE', 'ON', 'OFF'].includes(b.mode) ? ['hotwater', id, { mode: b.mode === 'ON' ? 'MANUAL' : b.mode }] : null;
+    case 'waterBoost': {
+      const m = Math.round(Number(b.minutes));
+      return m >= 15 && m <= 360 ? ['hotwater', id, { mode: 'BOOST', boost: String(m) }] : null;
+    }
+    case 'light': {
+      const type = ['warmwhitelight', 'tuneablelight', 'colourtuneablelight'].includes(b.type) ? b.type : null;
+      if (!type) return null;
+      const s = { status: b.on ? 'ON' : 'OFF' };
+      if (b.on && b.brightness != null) {
+        const br = Math.round(Number(b.brightness));
+        if (!(br >= 5 && br <= 100)) return null;
+        s.brightness = String(br);
+      }
+      return [type, id, s];
+    }
+    default: return null;
+  }
+}
+
+async function hive(request, env) {
+  const json = (v, status) => Response.json(v, { status: status || 200, headers: { 'Cache-Control': 'private, no-store' } });
+  if (!env.HIVE_CLIENT_ID || !env.HIVE_REGION || !env.HIVE_REFRESH_TOKEN) return json({ configured: false });
+  try {
+    if (request.method === 'POST') {
+      const b = await request.json().catch(() => ({}));
+      let call = hiveCommand(b);
+      // Cancelling a boost goes back to the mode and target from before it.
+      if (b.action === 'cancelBoost' && HIVE_ID.test(String(b.id || ''))) {
+        const r = await hiveApi(env, 'GET', '/products');
+        const p = r.ok ? (await r.json()).find((x) => x.id === b.id) : null;
+        const prev = (p && p.props && p.props.previous) || {};
+        const s = { mode: prev.mode && prev.mode !== 'BOOST' ? prev.mode : 'SCHEDULE' };
+        if (p && p.type === 'heating' && prev.target != null) s.target = String(prev.target);
+        call = p ? [p.type, p.id, s] : null;
+      }
+      if (!call) return json({ error: 'bad command' }, 400);
+      const res = await hiveApi(env, 'POST', '/nodes/' + call[0] + '/' + call[1], call[2]);
+      if (!res.ok) throw new Error('hive ' + b.action + ' ' + res.status);
+    } else if (request.method !== 'GET') {
+      return new Response('Method not allowed', { status: 405 });
+    }
+    return json(await hiveState(env));
+  } catch (err) {
+    console.error('hive', err.message);
+    return json({ configured: true, error: err.login ? 'login' : 'Hive unavailable' }, 502);
+  }
+}
+
 // ------------------------------------------------------------ Spotify
 // Remote control for one Spotify (Premium) account via the Web API: now playing, controls,
 // library, search, queue and devices. Music plays on the account's devices, not on the screen.
@@ -614,6 +743,7 @@ export default {
     if (url.pathname === '/api/shopping') return shopping(request, env);
     if (url.pathname === '/api/chores' || url.pathname === '/api/chores/done') return chores(request, env, url);
     if (url.pathname === '/api/agents') return agents(request, env);
+    if (url.pathname === '/api/hive') return hive(request, env);
     if (url.pathname === '/api/spotify' || url.pathname.startsWith('/api/spotify/')) return spotify(request, env, url);
 
     const res = await env.ASSETS.fetch(request);

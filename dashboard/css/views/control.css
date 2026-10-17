@@ -110,3 +110,14 @@
 .cam-big .tk-live { left: 20px; top: 20px; }
 .cam-big-bar .label { position: absolute; left: 24px; bottom: 20px; }
 .is-pulse { box-shadow: 0 0 0 6px var(--warm); }
+
+/* Hive (js/views/control.js) */
+.th-verb--idle { background: rgba(255, 255, 255, .15); }
+.th-verb--off { background: rgba(255, 255, 255, .08); color: rgba(255, 255, 255, .6); }
+.th-src { font-size: 14px; color: rgba(255, 255, 255, .5); }
+.th-row { display: flex; align-items: center; gap: 10px; }
+.th-row .seg { flex: 1; }
+.th-boost { height: 52px; padding: 0 18px; border-radius: 999px; background: rgba(255, 255, 255, .12); color: #fff; font-size: 14px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; }
+.th-boost.is-on { background: #FF6A1A; }
+.th-msg { display: flex; flex-direction: column; gap: 8px; padding: 30px 0; font-size: 17px; color: rgba(255, 255, 255, .75); }
+.th-msg b { font-size: 24px; color: #fff; }
