@@ -2,6 +2,7 @@
 (function () {
   'use strict';
   var D = window.DATA;
+  var save = D.shopping ? D.shopping.save : function () {}; // shopping-store.js
   var V = { el: null, store: 'all', query: '', drawer: false, pending: {}, flash: null };
 
   function open() { return D.groceries.filter(function (g) { return !g.done && (V.store === 'all' || g.store === V.store); }); }
@@ -142,17 +143,20 @@
     var g = find(name, false), msg;
     if (g) {
       g.qty++;
+      save([g]);
       msg = 'Already on the list · now <b>×' + g.qty + '</b> ' + App.esc(g.name);
       var q = V.el.querySelector('.s-list [data-id="' + g.id + '"] .s-qty .num');
       if (q) q.textContent = g.qty;
     } else if ((g = find(name, true))) {
       g.done = false; g.qty = 1;
+      save([g]);
       msg = 'Added back <b>' + App.esc(g.name) + '</b>';
       paintList();
     } else {
       var cat = D.catalog.filter(function (c) { return c[0].toLowerCase() === name.toLowerCase(); })[0];
       g = { id: D._gid(), name: cat ? cat[0] : name.charAt(0).toUpperCase() + name.slice(1), cat: categorize(name), qty: 1, store: V.store === 'all' ? 'grocer' : V.store, done: false, note: '' };
       D.groceries.push(g);
+      save([g]);
       msg = 'Added <b>' + App.esc(g.name) + '</b> to ' + g.cat;
       insertRow(g);
     }
@@ -174,6 +178,7 @@
       if (!V.pending[g.id]) return;
       delete V.pending[g.id];
       g.done = true;
+      save([g]);
       removeRow(g);
       refreshSuggestFor(g);
       App.emit('data');
@@ -184,6 +189,7 @@
         var wasDone = g.done;
         delete V.pending[g.id];
         g.done = false;
+        if (wasDone) save([g]);
         if (wasDone) paintList();
         else { var r = V.el.querySelector('.s-list [data-id="' + g.id + '"]'); if (r) r.classList.remove('is-checking'); }
         refreshSuggestFor(g);
@@ -203,6 +209,7 @@
     if ((t = e.target.closest('[data-qty]'))) {
       var q = D.groceries.filter(function (x) { return x.id === t.dataset.id; })[0];
       q.qty = Math.max(1, q.qty + +t.dataset.qty);
+      save([q]);
       t.parentNode.querySelector('.num').textContent = q.qty;
       refreshSuggestFor(q);
       return;
@@ -212,19 +219,28 @@
     if ((t = e.target.closest('[data-drawer]'))) { V.drawer = !V.drawer; return paintList(); }
     if ((t = e.target.closest('[data-revive]'))) {
       var r = D.groceries.filter(function (x) { return x.id === t.dataset.revive; })[0];
-      r.done = false; paintList(); paintSuggest(); App.emit('data');
+      r.done = false; save([r]); paintList(); paintSuggest(); App.emit('data');
       return App.toast('Added back <b>' + App.esc(r.name) + '</b>', { icon: 'cart', ms: 2500 });
     }
     if ((t = e.target.closest('[data-clear]'))) {
       var gone = done();
       D.groceries = D.groceries.filter(function (x) { return gone.indexOf(x) < 0; });
+      save([], gone.map(function (x) { return x.id; }));
       V.drawer = false;
       paintList();
       App.toast('Cleared ' + gone.length + ' items', {
-        icon: 'check', undo: function () { D.groceries = D.groceries.concat(gone); paintList(); }
+        icon: 'check', undo: function () { D.groceries = D.groceries.concat(gone); save(gone); paintList(); }
       });
     }
   }
+
+  // The list changed on another screen (shopping-store.js). Redraw the list but not the input,
+  // so a half-typed item survives.
+  App.on('shopping-remote', function () {
+    if (!V.el || App.current !== 'shopping') return;
+    paintList();
+    if (!V.query.trim()) paintSuggest();
+  });
 
   App.register('shopping', {
     show: function (el) {

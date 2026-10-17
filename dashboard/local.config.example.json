@@ -1,6 +1,7 @@
 {
   "url": "https://home-dashboard.YOUR-SUBDOMAIN.workers.dev/",
   "location": { "latitude": 51.5, "longitude": -0.12, "timezone": "Europe/London" },
+  "shoppingDatabaseId": "from: npx wrangler d1 create home-dashboard-shopping",
   "people": {
     "alex": { "name": "Parent 1" },
     "jordan": { "name": "Parent 2" },

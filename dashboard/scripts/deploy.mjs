@@ -1,7 +1,10 @@
-// `npm run deploy`: wrangler deploy, passing the weather location from the gitignored
-// local.config.json as Worker vars, so it isn't committed in wrangler.jsonc.
+// `npm run deploy`: wrangler deploy, adding the private settings from the gitignored
+// local.config.json so they aren't committed in wrangler.jsonc:
+// - the weather location, as Worker vars
+// - the shopping list's D1 database (shoppingDatabaseId), as the SHOPPING binding, via a
+//   generated config next to wrangler.jsonc (.wrangler.deploy.json, also gitignored)
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
 const cfg = existsSync('local.config.json') ? JSON.parse(readFileSync('local.config.json', 'utf8')) : {};
 const loc = cfg.location || {};
@@ -13,4 +16,15 @@ if (loc.latitude != null && loc.longitude != null) {
   console.warn('deploy: no location in local.config.json, so the dashboard keeps its demo weather');
 }
 
-execFileSync('npx', ['wrangler', 'deploy', ...vars, ...process.argv.slice(2)], { stdio: 'inherit' });
+const config = [];
+if (cfg.shoppingDatabaseId) {
+  // wrangler.jsonc allows comments; drop whole-line ones before parsing.
+  const base = JSON.parse(readFileSync('wrangler.jsonc', 'utf8').replace(/^\s*\/\/.*$/gm, ''));
+  base.d1_databases = [{ binding: 'SHOPPING', database_name: 'home-dashboard-shopping', database_id: cfg.shoppingDatabaseId }];
+  writeFileSync('.wrangler.deploy.json', JSON.stringify(base, null, 2) + '\n');
+  config.push('--config', '.wrangler.deploy.json');
+} else {
+  console.warn('deploy: no shoppingDatabaseId in local.config.json, so the shopping list is not saved');
+}
+
+execFileSync('npx', ['wrangler', 'deploy', ...config, ...vars, ...process.argv.slice(2)], { stdio: 'inherit' });

@@ -2,6 +2,7 @@
 import './icons.js';
 import './data.js';
 import { eventsFromCalendars } from './calendar-feed.js';
+import * as shopping from './shopping-store.js';
 
 // The demo events are fake; real ones come from the calendar feeds below.
 window.DATA.events = [];
@@ -30,6 +31,14 @@ await fetch('/photos/index.json')
   .catch(function () {});
 
 await loadLive();
+
+// The real shopping list (D1, via the Worker). The demo list is fake, so start empty if it
+// can't load yet; the 30 s refresh fills it in.
+await shopping.load().catch(function (err) {
+  console.error('shopping list', err);
+  window.DATA.groceries = [];
+});
+window.DATA.shopping = shopping;
 setInterval(loadLive, 30 * 60 * 1000); // the home view redraws the weather at the top of each hour
 
 await import('./app.js');
@@ -45,3 +54,4 @@ await import('./views/agents.js');
 await import('./views/ambient.js');
 await import('./diag.js');
 window.App.start();
+shopping.watch(function () { window.App.emit('shopping-remote'); window.App.emit('data'); });

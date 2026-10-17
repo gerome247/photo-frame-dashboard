@@ -81,6 +81,72 @@ async function getCalendars(env) {
   );
 }
 
+// ------------------------------------------------------------ shopping list
+// Stored in D1 (binding SHOPPING, added by scripts/deploy.mjs from local.config.json), one row
+// per item, so two screens editing different items never overwrite each other.
+//   GET  /api/shopping                                  -> { items: [...] }
+//   POST /api/shopping  { upsert: [item], delete: [id] } -> { items: [...] }
+
+let tableReady = false;
+async function shoppingTable(db) {
+  if (tableReady) return;
+  await db.prepare(
+    `CREATE TABLE IF NOT EXISTS shopping (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, cat TEXT NOT NULL, qty INTEGER NOT NULL,
+      store TEXT NOT NULL, done INTEGER NOT NULL, note TEXT NOT NULL,
+      created INTEGER NOT NULL, updated INTEGER NOT NULL)`,
+  ).run();
+  tableReady = true;
+}
+
+const ID = /^[A-Za-z0-9_-]{1,40}$/;
+const text = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+
+// Returns a clean item, or null if it isn't one.
+function shoppingItem(g) {
+  if (!g || typeof g !== 'object' || !ID.test(g.id || '')) return null;
+  const name = text(g.name, 100);
+  if (!name) return null;
+  const qty = Math.min(99, Math.max(1, Math.round(Number(g.qty)) || 1));
+  return { id: g.id, name, cat: text(g.cat, 40) || 'Other', qty, store: text(g.store, 20) || 'grocer', done: !!g.done, note: text(g.note, 200) };
+}
+
+async function shoppingList(db) {
+  const { results } = await db.prepare('SELECT id, name, cat, qty, store, done, note FROM shopping ORDER BY created, id').all();
+  return results.map((r) => ({ ...r, done: !!r.done }));
+}
+
+async function shopping(request, env) {
+  const db = env.SHOPPING;
+  if (!db) return Response.json({ error: 'no SHOPPING database' }, { status: 503 });
+  await shoppingTable(db);
+  if (request.method === 'POST') {
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return Response.json({ error: 'bad JSON' }, { status: 400 });
+    }
+    const upsert = Array.isArray(body.upsert) ? body.upsert.slice(0, 500).map(shoppingItem) : [];
+    const del = Array.isArray(body.delete) ? body.delete.slice(0, 500) : [];
+    if (upsert.some((g) => !g) || del.some((id) => typeof id !== 'string' || !ID.test(id))) {
+      return Response.json({ error: 'bad item' }, { status: 400 });
+    }
+    const now = Date.now();
+    const stmts = upsert.map((g) =>
+      db.prepare(
+        `INSERT INTO shopping (id, name, cat, qty, store, done, note, created, updated) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
+         ON CONFLICT(id) DO UPDATE SET name = ?2, cat = ?3, qty = ?4, store = ?5, done = ?6, note = ?7, updated = ?8`,
+      ).bind(g.id, g.name, g.cat, g.qty, g.store, g.done ? 1 : 0, g.note, now),
+    );
+    for (const id of del) stmts.push(db.prepare('DELETE FROM shopping WHERE id = ?1').bind(id));
+    if (stmts.length) await db.batch(stmts);
+  } else if (request.method !== 'GET') {
+    return new Response('Method not allowed', { status: 405 });
+  }
+  return Response.json({ items: await shoppingList(db) }, { headers: { 'Cache-Control': 'private, no-store' } });
+}
+
 function cookieValue(request) {
   const header = request.headers.get('Cookie') || '';
   for (const part of header.split(';')) {
@@ -124,6 +190,8 @@ export default {
       ]);
       return Response.json({ weather, calendars }, { headers: { 'Cache-Control': 'private, no-store' } });
     }
+
+    if (url.pathname === '/api/shopping') return shopping(request, env);
 
     const res = await env.ASSETS.fetch(request);
     const out = new Response(res.body, res);
