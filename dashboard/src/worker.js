@@ -624,7 +624,7 @@ async function spotifyList(env, url) {
 }
 
 const URI = /^spotify:(track|episode|album|playlist|artist|show):[A-Za-z0-9]{22}$/;
-const DEVICE = /^[A-Za-z0-9]{1,64}$/;
+const DEVICE = /^[A-Za-z0-9_-]{1,128}$/; // Alexa/Echo device ids contain - and _
 
 // POST bodies: { action: play | pause | next | previous | volume (volume) | seek (position) |
 // shuffle (state) | repeat (state) | queue (uri) | transfer (device) | playItem (context?, uris?, offset?) }
@@ -681,7 +681,7 @@ async function spotify(request, env, url) {
       const call = spotifyCommand(body);
       if (!call) return json({ error: 'bad command' }, 400);
       const res = await spotifyApi(env, call[0], call[1], call[2]);
-      if (res.status === 404) return json({ error: 'No active device. Start Spotify on a phone or speaker, or pick one under Devices.' }, 409);
+      if (res.status === 404) return json({ error: body.action === 'transfer' ? 'Spotify can’t reach that device right now. Try again, or start it from the phone.' : 'No active device. Start Spotify on a phone or speaker, or pick one under Devices.' }, 409);
       if (res.status === 403) return json({ error: 'Spotify refused (Premium needed, or not allowed on this device)' }, 409);
       if (!res.ok && res.status !== 204) throw new Error('spotify ' + body.action + ' ' + res.status);
       await new Promise((r) => setTimeout(r, 450)); // let Spotify catch up before reading the state
