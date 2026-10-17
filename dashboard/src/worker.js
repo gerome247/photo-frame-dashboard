@@ -241,6 +241,54 @@ async function chores(request, env, url) {
   return Response.json(await choresState(db, url), { headers: { 'Cache-Control': 'private, no-store' } });
 }
 
+// ------------------------------------------------------------ agents (AI plan usage)
+// The PC pushes usage numbers (scripts/agents-push.mjs reads the Claude Code login and logs
+// there, so no AI account token ever reaches Cloudflare). Kept in D1; the live service status
+// comes from the providers' public status pages.
+//   GET  /api/agents          -> { updated, agents: [...], status: { claude: {...} } }
+//   POST /api/agents { ... }  -> stores the PC's numbers
+
+let statusCache = { at: 0, value: {} };
+async function serviceStatus() {
+  if (Date.now() - statusCache.at < 5 * 60000) return statusCache.value;
+  const pages = { claude: 'https://status.claude.com/api/v2/summary.json', grok: 'https://status.x.ai/api/v2/summary.json' };
+  const value = {};
+  await Promise.all(Object.entries(pages).map(async ([id, u]) => {
+    try {
+      const res = await fetch(u, { cf: { cacheTtl: 120 } });
+      if (!res.ok) return;
+      const d = await res.json();
+      const incident = (d.incidents || []).find((i) => i.status !== 'resolved' && i.status !== 'postmortem');
+      value[id] = { indicator: (d.status || {}).indicator || 'none', description: (d.status || {}).description || '', incident: incident ? incident.name : '' };
+    } catch {
+      // no status for this one
+    }
+  }));
+  statusCache = { at: Date.now(), value };
+  return value;
+}
+
+async function agents(request, env) {
+  const db = env.SHOPPING;
+  if (!db) return Response.json({ error: 'no database' }, { status: 503 });
+  if (request.method === 'POST') {
+    const body = await request.text();
+    if (body.length > 20000) return Response.json({ error: 'too big' }, { status: 413 });
+    let d;
+    try {
+      d = JSON.parse(body);
+    } catch {
+      return Response.json({ error: 'bad JSON' }, { status: 400 });
+    }
+    if (!d || !Array.isArray(d.agents)) return Response.json({ error: 'bad agents' }, { status: 400 });
+    await kvPut(db, 'agents', JSON.stringify({ updated: new Date().toISOString(), agents: d.agents.slice(0, 8) }));
+    return Response.json({ ok: true });
+  }
+  if (request.method !== 'GET') return new Response('Method not allowed', { status: 405 });
+  const [stored, status] = await Promise.all([kvGet(db, 'agents'), serviceStatus()]);
+  return Response.json({ ...(stored ? JSON.parse(stored) : { agents: [] }), status }, { headers: { 'Cache-Control': 'private, no-store' } });
+}
+
 // ------------------------------------------------------------ Spotify
 // Remote control for one Spotify (Premium) account via the Web API: now playing, controls,
 // library, search, queue and devices. Music plays on the account's devices, not on the screen.
@@ -558,6 +606,7 @@ export default {
 
     if (url.pathname === '/api/shopping') return shopping(request, env);
     if (url.pathname === '/api/chores' || url.pathname === '/api/chores/done') return chores(request, env, url);
+    if (url.pathname === '/api/agents') return agents(request, env);
     if (url.pathname === '/api/spotify' || url.pathname.startsWith('/api/spotify/')) return spotify(request, env, url);
 
     const res = await env.ASSETS.fetch(request);

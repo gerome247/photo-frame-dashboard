@@ -66,3 +66,9 @@
 .ag-legend span { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 700; color: rgba(255, 255, 255, .8); }
 .ag-legend i { width: 9px; height: 9px; border-radius: 50%; background: var(--c); }
 .ag-legend span[style*="#111111"] i { background: #F2EEE6; }
+
+/* live data (js/views/agents.js) */
+.ag-note { font-size: 17px; line-height: 1.35; color: var(--mute); margin: 4px 0 0; }
+.ag-breakdown { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; font-size: 15px; color: var(--ink-2); }
+.ag-breakdown .ag-label { width: 100%; }
+.ag-empty { flex: 1; display: grid; place-items: center; font-size: 36px; color: var(--mute); }
