@@ -61,6 +61,10 @@ public class MainActivity extends Activity {
   static final long NAV_CHECK_MS = 5000;
   static final long NAV_REBIND_MS = 1000;
   static final float EXIT_SLOP_PX = 60;
+  // One-finger alternative for touch panels that merge two nearby fingers into one (the PF1007's
+  // gslX680, see PR #40): hold one finger still in the top-left corner (the sidebar's Today).
+  static final long CORNER_HOLD_MS = 3000;
+  static final float CORNER_PX = 150;
 
   private WebView web;
   private final Handler handler = new Handler(Looper.getMainLooper());
@@ -70,6 +74,8 @@ public class MainActivity extends Activity {
   private final float[] exitX = new float[2];
   private final float[] exitY = new float[2];
   private boolean exitArmed;
+  private boolean cornerArmed;
+  private float cornerX, cornerY;
   private String retryUrl;
   private boolean pageFailed;
   private LinearLayout offline;
@@ -116,7 +122,8 @@ public class MainActivity extends Activity {
     @Override
     public void run() {
       exitArmed = false;
-      Log.i(TAG, "Two-finger hold: opening controls");
+      cornerArmed = false;
+      Log.i(TAG, "Hold: opening controls");
       new AlertDialog.Builder(MainActivity.this)
           .setTitle("Home HQ")
           .setItems(new String[] {"Open launcher", "Android settings", "Wi-Fi settings", "Reload dashboard"},
@@ -471,7 +478,17 @@ public class MainActivity extends Activity {
   @Override
   public boolean dispatchTouchEvent(MotionEvent e) {
     switch (e.getActionMasked()) {
+      case MotionEvent.ACTION_DOWN:
+        if (e.getX() < CORNER_PX && e.getY() < CORNER_PX) {
+          cornerArmed = true;
+          cornerX = e.getX();
+          cornerY = e.getY();
+          handler.removeCallbacks(showControls);
+          handler.postDelayed(showControls, CORNER_HOLD_MS);
+        }
+        break;
       case MotionEvent.ACTION_POINTER_DOWN:
+        cancelCorner();
         if (e.getPointerCount() == 2) {
           for (int i = 0; i < 2; i++) {
             exitIds[i] = e.getPointerId(i);
@@ -486,6 +503,7 @@ public class MainActivity extends Activity {
         }
         break;
       case MotionEvent.ACTION_MOVE:
+        if (cornerArmed && Math.hypot(e.getX() - cornerX, e.getY() - cornerY) > EXIT_SLOP_PX) cancelCorner();
         if (exitArmed) {
           for (int i = 0; i < 2; i++) {
             int idx = e.findPointerIndex(exitIds[i]);
@@ -500,11 +518,18 @@ public class MainActivity extends Activity {
       case MotionEvent.ACTION_UP:
       case MotionEvent.ACTION_CANCEL:
         cancelExit();
+        cancelCorner();
         break;
       default:
         break;
     }
     return super.dispatchTouchEvent(e);
+  }
+
+  private void cancelCorner() {
+    if (!cornerArmed) return;
+    cornerArmed = false;
+    handler.removeCallbacks(showControls);
   }
 
   private void cancelExit() {

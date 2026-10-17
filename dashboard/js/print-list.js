@@ -34,7 +34,9 @@
   function newPage(n, total) {
     var c = document.createElement('canvas');
     c.width = W; c.height = H;
-    var ctx = c.getContext('2d');
+    // Software canvas: on the PF1007 frame's GPU a large accelerated canvas loses its blue channel
+    // (white turns yellow and text vanishes). willReadFrequently keeps it on the CPU.
+    var ctx = c.getContext('2d', { willReadFrequently: true });
     ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
     ctx.fillStyle = '#000'; ctx.textBaseline = 'alphabetic';
     ctx.font = '120px ' + SERIF;
