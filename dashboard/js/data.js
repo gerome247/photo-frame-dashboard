@@ -163,10 +163,13 @@ window.DATA = (function () {
   var week = { maya: [1, 1, 0, 1, 1, 0, 1], otto: [1, 0, 1, 1, 1, 1, 0] };
 
   // ---------------------------------------------------------------- shopping
-  var stores = [{ id: 'grocer', name: 'FreshCo' }, { id: 'costco', name: 'Costco' }];
+  // 'grocer' is Tesco's id (it was FreshCo), so items already saved with it stay Tesco's.
+  // color / accent (optional) theme the Shopping tab while that store's tab is open.
+  var stores = [{ id: 'grocer', name: 'Tesco', color: '#00539f', accent: '#ee1c2e' }, { id: 'ms', name: 'M&S', color: '#004E42' }, { id: 'costco', name: 'Costco', color: '#E32A36', accent: '#0060A9' }];
   var catOrder = {
     all: ['Produce', 'Bakery', 'Meat & Fish', 'Dairy & Eggs', 'Pantry', 'Frozen', 'Snacks', 'Household'],
     grocer: ['Produce', 'Bakery', 'Meat & Fish', 'Dairy & Eggs', 'Pantry', 'Frozen', 'Snacks', 'Household'],
+    ms: ['Produce', 'Bakery', 'Meat & Fish', 'Dairy & Eggs', 'Pantry', 'Frozen', 'Snacks', 'Household'],
     costco: ['Household', 'Pantry', 'Snacks', 'Dairy & Eggs', 'Meat & Fish', 'Frozen', 'Produce', 'Bakery']
   };
   var gid = 0;
@@ -216,7 +219,10 @@ window.DATA = (function () {
     ['Popcorn', 'Snacks'], ['Dish soap', 'Household'], ['Dishwasher pods', 'Household'], ['Garbage bags', 'Household'],
     ['Laundry detergent', 'Household'], ['Paper towels', 'Household'], ['Toilet paper', 'Household'], ['Toothpaste', 'Household']
   ];
-  var usuals = ['Milk 2%', 'Eggs', 'Bananas', 'Bread', 'Apples', 'Coffee beans', 'Greek yogurt', 'Cheddar', 'Butter', 'Baby spinach', 'Chicken thighs', 'Paper towels'];
+  // Quick-add tiles. store is a store id, or 'all' (added to whichever store tab is open).
+  // Replaced by the saved list (D1, via js/shopping-store.js) once someone changes them.
+  var usuals = ['Milk 2%', 'Eggs', 'Bananas', 'Bread', 'Apples', 'Coffee beans', 'Greek yogurt', 'Cheddar', 'Butter', 'Baby spinach', 'Chicken thighs', 'Paper towels']
+    .map(function (name) { return { name: name, store: 'all' }; });
 
   // ---------------------------------------------------------------- home control
   var rooms = [

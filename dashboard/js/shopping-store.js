@@ -3,6 +3,7 @@
 // - save(items, deletedIds) sends only what changed, so two screens editing different items
 //   don't overwrite each other. Unsent changes are kept and retried.
 // - Every 30 s the list is fetched again, so a change made on the other screen shows up here.
+// - The usuals (quick-add tiles) come with the list; saveUsuals(list) replaces them.
 var D = window.DATA;
 var queue = { upsert: {}, del: {} }; // changes not yet sent
 var inflight = { upsert: {}, del: {} }; // sent, not yet confirmed by the Worker
@@ -45,14 +46,39 @@ function same(a, b) {
   return JSON.stringify(a.map(copy)) === JSON.stringify(b.map(copy));
 }
 
+// The saved usuals, unless a change to them is still on its way (null: keep the built-in list).
+var usualsSending = false;
+function applyUsuals(list) {
+  if (!Array.isArray(list) || usualsSending) return false;
+  var changed = JSON.stringify(list) !== JSON.stringify(D.usuals);
+  D.usuals = list;
+  return changed;
+}
+
 export function load() {
   return fetch('/api/shopping', { cache: 'no-store' })
     .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
     .then(function (data) {
       var before = D.groceries.slice();
       apply(data.items);
-      return !same(before, D.groceries);
+      var usualsChanged = applyUsuals(data.usuals);
+      return !same(before, D.groceries) || usualsChanged;
     });
+}
+
+// Replaces the usuals. Resolves when saved; on failure the previous list comes back.
+export function saveUsuals(list) {
+  var before = D.usuals;
+  D.usuals = list;
+  usualsSending = true;
+  return fetch('/api/shopping', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ usuals: list })
+  })
+    .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(function (data) { usualsSending = false; applyUsuals(data.usuals); })
+    .catch(function (err) { usualsSending = false; D.usuals = before; throw err; });
 }
 
 function flush() {

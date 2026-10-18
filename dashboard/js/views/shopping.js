@@ -7,7 +7,10 @@
 
   function open() { return D.groceries.filter(function (g) { return !g.done && (V.store === 'all' || g.store === V.store); }); }
   function done() { return D.groceries.filter(function (g) { return g.done && (V.store === 'all' || g.store === V.store); }); }
-  function storeName(id) { return D.stores.filter(function (s) { return s.id === id; })[0].name; }
+  function storeName(id) { var s = D.stores.filter(function (x) { return x.id === id; })[0]; return s ? s.name : id; }
+  // Store for a new item: the usual's own store, else the open tab (Tesco from the All tab).
+  function storeFor(u) { return u && u.store !== 'all' ? u.store : (V.store === 'all' ? D.stores[0].id : V.store); }
+  function usual(name) { return D.usuals.filter(function (u) { return u.name.toLowerCase() === name.toLowerCase(); })[0]; }
 
   function categorize(name) {
     var n = name.toLowerCase();
@@ -25,7 +28,7 @@
       '<button class="s-hit" data-check="' + g.id + '">' +
       '<span class="s-box">' + App.icon('check', 22) + '</span>' +
       '<span class="s-name"><b>' + App.esc(g.name) + '</b>' + (g.note ? '<small>' + App.esc(g.note) + '</small>' : '') + '</span>' +
-      (V.store === 'all' && g.store === 'costco' ? '<span class="s-store">Costco</span>' : '') +
+      (V.store === 'all' && g.store !== D.stores[0].id ? '<span class="s-store">' + App.esc(storeName(g.store)) + '</span>' : '') +
       '</button>' +
       '<div class="s-qty"><button data-qty="-1" data-id="' + g.id + '" aria-label="Less">' + App.icon('minus', 22) + '</button><span class="num">' + g.qty + '</span><button data-qty="1" data-id="' + g.id + '" aria-label="More">' + App.icon('plus', 22) + '</button></div>' +
       '</div>';
@@ -57,12 +60,62 @@
         return '<button class="s-ac-row" data-add="' + App.esc(m[0]) + '"><b>' + App.esc(m[0]) + '</b><span class="label">' + (on ? 'On list · ×' + on.qty : m[1]) + '</span>' + App.icon('plus', 26) + '</button>';
       }).join('') + (exact ? '' : '<button class="s-ac-row s-ac-row--new" data-add="' + App.esc(V.query.trim()) + '"><b>Add “' + App.esc(V.query.trim()) + '”</b><span class="label">' + categorize(V.query) + '</span>' + App.icon('plus', 26) + '</button>') + '</div>';
     }
-    return '<div class="label">Usuals · tap to add</div><div class="s-usuals">' + D.usuals.map(usualTile).join('') + '</div>';
+    // A store tab shows its own usuals and the 'all' ones; the All tab shows every usual.
+    var list = D.usuals.filter(function (u) { return V.store === 'all' || u.store === 'all' || u.store === V.store; });
+    return '<div class="label">Usuals · tap to add</div><div class="s-usuals">' + list.map(usualTile).join('') +
+      '<button class="s-tile s-tile--new" data-new-usual>' + App.icon('plus', 30) + '<span>Add a usual</span></button></div>';
   }
-  function usualTile(name) {
-    var on = find(name, false);
-    return '<button class="s-tile' + (on ? ' is-on' : '') + '" data-add="' + App.esc(name) + '">' +
-      '<b>' + App.esc(name) + '</b><span>' + (on ? App.icon('check', 16) + 'On list' + (on.qty > 1 ? ' ×' + on.qty : '') : categorize(name)) + '</span></button>';
+  function usualTile(u) {
+    var on = find(u.name, false);
+    return '<button class="s-tile' + (on ? ' is-on' : '') + '" data-add="' + App.esc(u.name) + '">' +
+      '<b>' + App.esc(u.name) + '</b><span>' + (on ? App.icon('check', 16) + 'On list' + (on.qty > 1 ? ' ×' + on.qty : '')
+        : (u.store !== 'all' ? App.esc(storeName(u.store)) + ' · ' : '') + categorize(u.name)) + '</span></button>';
+  }
+
+  // "Add a usual": a name and which store's tab it shows on (All: every tab).
+  function newUsual() {
+    var pick = V.store;
+    var saveUsuals = D.shopping && D.shopping.saveUsuals;
+    function seg() {
+      return [['all', 'All']].concat(D.stores.map(function (x) { return [x.id, x.name]; })).map(function (o) {
+        return '<button class="' + (o[0] === pick ? 'is-on' : '') + '" data-pick="' + o[0] + '">' + App.esc(o[1]) + '</button>';
+      }).join('');
+    }
+    App.sheet('<div class="sheet-pad add">' +
+      '<div class="label">New usual</div>' +
+      '<input class="big-input s-usual-name" placeholder="What do you often buy?" maxlength="40" autocomplete="off" enterkeyhint="done">' +
+      '<div class="label">Shows on</div><div class="seg s-usual-store">' + seg() + '</div>' +
+      '<div class="sheet-actions"><button class="btn btn--solid" data-save-usual>' + App.icon('plus', 22) + ' Add usual</button></div>' +
+      '</div>', {
+      onMount: function (sheet, close) {
+        var input = sheet.querySelector('.s-usual-name');
+        setTimeout(function () { input.focus(); }, 50);
+        function done() {
+          var name = input.value.trim();
+          if (!name) { input.focus(); return; }
+          name = name.charAt(0).toUpperCase() + name.slice(1);
+          var old = usual(name);
+          var list = D.usuals.filter(function (u) { return u !== old; }).concat([{ name: old ? old.name : name, store: pick }]);
+          close();
+          if (!saveUsuals) return;
+          saveUsuals(list).then(function () {
+            if (V.el && App.current === 'shopping' && !V.query.trim()) paintSuggest();
+          }).catch(function (err) {
+            console.error('usuals save', err);
+            if (V.el && !V.query.trim()) paintSuggest();
+            App.toast('Couldn’t save the usual', { icon: 'x', tone: 'error', ms: 4000 });
+          });
+          if (!V.query.trim()) paintSuggest();
+          App.toast((old ? 'Moved' : 'Added') + ' <b>' + App.esc(old ? old.name : name) + '</b> to the usuals' + (pick !== 'all' ? ' · ' + App.esc(storeName(pick)) : ''), { icon: 'check', ms: 3000 });
+        }
+        sheet.addEventListener('click', function (e) {
+          var b = e.target.closest('[data-pick]');
+          if (b) { pick = b.dataset.pick; sheet.querySelector('.s-usual-store').innerHTML = seg(); return; }
+          if (e.target.closest('[data-save-usual]')) done();
+        });
+        input.addEventListener('keydown', function (e) { if (e.key === 'Enter') done(); });
+      }
+    });
   }
 
   // ---- granular updates (full list + usuals rebuild costs ~500ms on the wall tablet)
@@ -74,7 +127,8 @@
   function refreshSuggestFor(g) {
     if (V.query.trim()) return paintSuggest();
     var t = V.el.querySelector('.s-usuals [data-add="' + App.esc(g.name) + '"]');
-    if (t) swap(t, usualTile(g.name));
+    var u = usual(g.name);
+    if (t && u) swap(t, usualTile(u));
   }
   function catCount(cat) {
     var c = V.el.querySelector('.s-cat[data-cat="' + cat + '"]');
@@ -113,7 +167,15 @@
 
   function paintList() { var l = V.el.querySelector('.s-list'); var st = l.scrollTop; l.innerHTML = listHTML(); l.scrollTop = st; paintHead(); }
   function paintSuggest() { V.el.querySelector('.s-suggest').innerHTML = suggestHTML(); }
+  // A store with its own colours themes the view while its tab is open (--store, --store-accent).
+  function paintTheme() {
+    var shop = V.el.querySelector('.shop'), st = D.stores.filter(function (x) { return x.id === V.store; })[0];
+    var on = !!(st && st.color);
+    shop.classList.toggle('is-themed', on);
+    shop.style.cssText = on ? '--store:' + st.color + ';--store-accent:' + (st.accent || st.color) : '';
+  }
   function paintHead() {
+    paintTheme();
     var all = D.groceries.filter(function (g) { return !g.done; });
     V.el.querySelector('.s-count').innerHTML = '<span class="num">' + open().length + '</span> to get';
     V.el.querySelector('.s-stores').innerHTML = [['all', 'All']].concat(D.stores.map(function (s) { return [s.id, s.name]; })).map(function (s) {
@@ -140,7 +202,8 @@
     paintList(); paintSuggest();
   }
 
-  function add(name) {
+  // store: where a new item goes (a usual's store); defaults to the open tab.
+  function add(name, store) {
     name = name.trim();
     var g = find(name, false), msg;
     if (g) {
@@ -156,10 +219,10 @@
       paintList();
     } else {
       var cat = D.catalog.filter(function (c) { return c[0].toLowerCase() === name.toLowerCase(); })[0];
-      g = { id: D._gid(), name: cat ? cat[0] : name.charAt(0).toUpperCase() + name.slice(1), cat: categorize(name), qty: 1, store: V.store === 'all' ? 'grocer' : V.store, done: false, note: '' };
+      g = { id: D._gid(), name: cat ? cat[0] : name.charAt(0).toUpperCase() + name.slice(1), cat: categorize(name), qty: 1, store: store || storeFor(null), done: false, note: '' };
       D.groceries.push(g);
       save([g]);
-      msg = 'Added <b>' + App.esc(g.name) + '</b> to ' + g.cat;
+      msg = 'Added <b>' + App.esc(g.name) + '</b> to ' + g.cat + (D.stores.length > 1 ? ' · ' + App.esc(storeName(g.store)) : '');
       insertRow(g);
     }
     var hadQuery = !!V.query.trim();
@@ -217,8 +280,9 @@
       return;
     }
     if ((t = e.target.closest('[data-print]'))) return PrintList.print();
-    if ((t = e.target.closest('[data-add]'))) return add(t.dataset.add);
-    if ((t = e.target.closest('[data-store]'))) { V.store = t.dataset.store; return paintList(); }
+    if ((t = e.target.closest('[data-new-usual]'))) return newUsual();
+    if ((t = e.target.closest('[data-add]'))) { var u = t.closest('.s-usuals') ? usual(t.dataset.add) : null; return add(t.dataset.add, u ? storeFor(u) : null); }
+    if ((t = e.target.closest('[data-store]'))) { V.store = t.dataset.store; paintList(); if (!V.query.trim()) paintSuggest(); return; }
     if ((t = e.target.closest('[data-drawer]'))) { V.drawer = !V.drawer; return paintList(); }
     if ((t = e.target.closest('[data-revive]'))) {
       var r = D.groceries.filter(function (x) { return x.id === t.dataset.revive; })[0];

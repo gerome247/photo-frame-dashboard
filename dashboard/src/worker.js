@@ -93,8 +93,10 @@ async function getCalendars(env) {
 // ------------------------------------------------------------ shopping list
 // Stored in D1 (binding SHOPPING, added by scripts/deploy.mjs from local.config.json), one row
 // per item, so two screens editing different items never overwrite each other.
-//   GET  /api/shopping                                  -> { items: [...] }
-//   POST /api/shopping  { upsert: [item], delete: [id] } -> { items: [...] }
+//   GET  /api/shopping                                  -> { items: [...], usuals }
+//   POST /api/shopping  { upsert: [item], delete: [id] } -> { items: [...], usuals }
+//   POST /api/shopping  { usuals: [{ name, store }] }     replaces the usuals (quick-add tiles)
+// usuals is null until someone first changes them, so the screens keep their built-in list.
 
 let tableReady = false;
 async function shoppingTable(db) {
@@ -118,6 +120,21 @@ function shoppingItem(g) {
   if (!name) return null;
   const qty = Math.min(99, Math.max(1, Math.round(Number(g.qty)) || 1));
   return { id: g.id, name, cat: text(g.cat, 40) || 'Other', qty, store: text(g.store, 20) || 'grocer', done: !!g.done, note: text(g.note, 200) };
+}
+
+// A usual's store is a store id, or 'all' (added to whichever store tab is open).
+const USUAL_STORE = /^[a-z0-9_-]{1,20}$/;
+function shoppingUsuals(list) {
+  if (!Array.isArray(list)) return null;
+  const seen = new Set(), out = [];
+  for (const u of list.slice(0, 60)) {
+    const name = u && typeof u === 'object' ? text(u.name, 40) : '';
+    const store = u && USUAL_STORE.test(u.store || '') ? u.store : 'all';
+    if (!name || seen.has(name.toLowerCase())) continue;
+    seen.add(name.toLowerCase());
+    out.push({ name, store });
+  }
+  return out;
 }
 
 async function shoppingList(db) {
@@ -150,10 +167,19 @@ async function shopping(request, env) {
     );
     for (const id of del) stmts.push(db.prepare('DELETE FROM shopping WHERE id = ?1').bind(id));
     if (stmts.length) await db.batch(stmts);
+    if (body.usuals !== undefined) {
+      const usuals = shoppingUsuals(body.usuals);
+      if (!usuals) return Response.json({ error: 'bad usuals' }, { status: 400 });
+      await kvGet(db, 'shopping_usuals'); // creates the kv table on a new database
+      await kvPut(db, 'shopping_usuals', JSON.stringify(usuals));
+    }
   } else if (request.method !== 'GET') {
     return new Response('Method not allowed', { status: 405 });
   }
-  return Response.json({ items: await shoppingList(db) }, { headers: { 'Cache-Control': 'private, no-store' } });
+  const raw = await kvGet(db, 'shopping_usuals');
+  let usuals = null;
+  try { usuals = raw ? shoppingUsuals(JSON.parse(raw)) : null; } catch { usuals = null; }
+  return Response.json({ items: await shoppingList(db), usuals }, { headers: { 'Cache-Control': 'private, no-store' } });
 }
 
 // ------------------------------------------------------------ chores
