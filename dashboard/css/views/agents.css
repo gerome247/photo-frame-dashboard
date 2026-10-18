@@ -5,7 +5,7 @@
 .ag-sync { display: flex; align-items: center; gap: 14px; }
 .ag-sync .icon-btn .i { transform: scaleX(-1); }
 
-.ag-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: 1fr 1fr; gap: 14px; }
+.ag-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(var(--ag-cols, 3), 1fr); grid-template-rows: 1fr; gap: 14px; }
 .ag-card {
   background: var(--card); border-radius: var(--r); padding: 16px 18px 14px;
   display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow: hidden;
@@ -78,6 +78,10 @@
   [data-layout="fluid"] .agents { height: auto; min-height: 100%; }
   [data-layout="fluid"] .ag-grid { flex: none; grid-template-columns: 1fr 1fr; grid-template-rows: none; grid-auto-rows: minmax(300px, auto); }
   [data-layout="fluid"] .ag-chart { min-height: 140px; }
+  [data-layout="fluid"] .ag-sum { grid-column: 1 / -1; }
+  /* the title stays on one line; a long description drops below it */
+  [data-layout="fluid"] .ag-id { flex-wrap: wrap; row-gap: 4px; }
+  [data-layout="fluid"] .ag-id b { white-space: nowrap; }
 }
 @media (max-width: 767px) {
   [data-layout="fluid"] .ag-top { flex-wrap: wrap; gap: 10px; }

@@ -139,7 +139,8 @@
       '<header class="ag-top"><div><div class="label">AI plans · usage limits</div><h1 class="serif">Agents</h1></div>' +
       '<div class="ag-sync"><span class="label">' + synced() + '</span>' +
       '<button class="icon-btn" data-refresh aria-label="Refresh">' + App.icon('undo', 26) + '</button></div></header>' +
-      (cards ? '<div class="ag-grid" style="grid-template-columns:repeat(' + cols + ',1fr);grid-template-rows:1fr">' + cards + '</div>'
+      // Column count as a variable, not an inline grid, so the phone / iPad layout can override it
+      (cards ? '<div class="ag-grid" style="--ag-cols:' + cols + '">' + cards + '</div>'
         : '<div class="ag-empty serif">' + (V.data ? 'No usage from the PC yet.' : 'Loading…') + '</div>') +
       '</div>';
   }
