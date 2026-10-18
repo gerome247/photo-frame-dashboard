@@ -19,9 +19,12 @@
       D.catalog.filter(function (c) { return n.split(/\s+/).some(function (w) { return w.length > 3 && c[0].toLowerCase().indexOf(w) > -1; }); })[0];
     return hit ? hit[1] : 'Other';
   }
-  function find(name, isDone) {
-    return D.groceries.filter(function (g) { return !!g.done === isDone && g.name.toLowerCase() === name.toLowerCase(); })[0];
+  // An item by name, optionally only in one store (the same thing can be on two stores' lists).
+  function find(name, isDone, store) {
+    return D.groceries.filter(function (g) { return !!g.done === isDone && g.name.toLowerCase() === name.toLowerCase() && (!store || g.store === store); })[0];
   }
+  // The store tab being viewed (null on All), for "On list" marks.
+  function tabStore() { return V.store === 'all' ? null : V.store; }
 
   function row(g) {
     return '<div class="s-row' + (V.pending[g.id] ? ' is-checking' : '') + '" data-id="' + g.id + '">' +
@@ -56,7 +59,7 @@
         .concat(D.catalog.filter(function (c) { var i = c[0].toLowerCase().indexOf(q); return i > 0; })).slice(0, 5);
       var exact = matches.some(function (m) { return m[0].toLowerCase() === q; });
       return '<div class="label">Suggestions</div><div class="s-ac">' + matches.map(function (m) {
-        var on = find(m[0], false);
+        var on = find(m[0], false, tabStore());
         return '<button class="s-ac-row" data-add="' + App.esc(m[0]) + '"><b>' + App.esc(m[0]) + '</b><span class="label">' + (on ? 'On list · ×' + on.qty : m[1]) + '</span>' + App.icon('plus', 26) + '</button>';
       }).join('') + (exact ? '' : '<button class="s-ac-row s-ac-row--new" data-add="' + App.esc(V.query.trim()) + '"><b>Add “' + App.esc(V.query.trim()) + '”</b><span class="label">' + categorize(V.query) + '</span>' + App.icon('plus', 26) + '</button>') + '</div>';
     }
@@ -66,7 +69,7 @@
       '<button class="s-tile s-tile--new" data-new-usual>' + App.icon('plus', 30) + '<span>Add a usual</span></button></div>';
   }
   function usualTile(u) {
-    var on = find(u.name, false);
+    var on = find(u.name, false, tabStore());
     return '<button class="s-tile' + (on ? ' is-on' : '') + '" data-add="' + App.esc(u.name) + '">' +
       '<b>' + App.esc(u.name) + '</b><span>' + (on ? App.icon('check', 16) + 'On list' + (on.qty > 1 ? ' ×' + on.qty : '')
         : (u.store !== 'all' ? App.esc(storeName(u.store)) + ' · ' : '') + categorize(u.name)) + '</span></button>';
@@ -205,21 +208,22 @@
   // store: where a new item goes (a usual's store); defaults to the open tab.
   function add(name, store) {
     name = name.trim();
-    var g = find(name, false), msg;
+    store = store || storeFor(null);
+    var g = find(name, false, store), msg;
     if (g) {
       g.qty++;
       save([g]);
-      msg = 'Already on the list · now <b>×' + g.qty + '</b> ' + App.esc(g.name);
+      msg = 'Already on the list · now <b>×' + g.qty + '</b> ' + App.esc(g.name) + (D.stores.length > 1 ? ' · ' + App.esc(storeName(g.store)) : '');
       var q = V.el.querySelector('.s-list [data-id="' + g.id + '"] .s-qty .num');
       if (q) q.textContent = g.qty;
-    } else if ((g = find(name, true))) {
+    } else if ((g = find(name, true, store))) {
       g.done = false; g.qty = 1;
       save([g]);
       msg = 'Added back <b>' + App.esc(g.name) + '</b>';
       paintList();
     } else {
       var cat = D.catalog.filter(function (c) { return c[0].toLowerCase() === name.toLowerCase(); })[0];
-      g = { id: D._gid(), name: cat ? cat[0] : name.charAt(0).toUpperCase() + name.slice(1), cat: categorize(name), qty: 1, store: store || storeFor(null), done: false, note: '' };
+      g = { id: D._gid(), name: cat ? cat[0] : name.charAt(0).toUpperCase() + name.slice(1), cat: categorize(name), qty: 1, store: store, done: false, note: '' };
       D.groceries.push(g);
       save([g]);
       msg = 'Added <b>' + App.esc(g.name) + '</b> to ' + g.cat + (D.stores.length > 1 ? ' · ' + App.esc(storeName(g.store)) : '');
