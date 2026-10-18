@@ -42,3 +42,26 @@
 .ring-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 10px; }
 .ring-empty .serif { font-size: 48px; line-height: 1.05; }
 .ring-empty p { color: var(--mute); font-size: 22px; max-width: 640px; }
+
+/* ---- fluid layout (phones, iPads, desktop browsers; see base.css) */
+@media (max-width: 1023px) {
+  [data-layout="fluid"] .ring-body { grid-template-columns: 1fr 260px; }
+}
+/* Phone: the still on top (4:3), recent events below */
+@media (max-width: 767px) {
+  [data-layout="fluid"] .ring { height: auto; min-height: 100%; }
+  [data-layout="fluid"] .ring-top { flex-wrap: wrap; }
+  [data-layout="fluid"] .ring-top h1 { font-size: 40px; }
+  [data-layout="fluid"] .ring-meta { align-items: flex-start; }
+  [data-layout="fluid"] .ring-pills { justify-content: flex-start; }
+  [data-layout="fluid"] .ring-pills button { min-height: 44px; padding: 0 14px; font-size: 15px; }
+  [data-layout="fluid"] .ring-body { flex: none; grid-template-columns: 1fr; gap: 12px; }
+  [data-layout="fluid"] .ring-photo { aspect-ratio: 4 / 3; }
+  [data-layout="fluid"] .ring-wait { font-size: 24px; }
+  [data-layout="fluid"] .ring-cap b { font-size: 22px; }
+  [data-layout="fluid"] .ring-cap span { font-size: 15px; }
+  [data-layout="fluid"] .ring-side { overflow: visible; }
+  [data-layout="fluid"] .ring-ev b { font-size: 18px; }
+  [data-layout="fluid"] .ring-empty .serif { font-size: 34px; }
+  [data-layout="fluid"] .ring-empty p { font-size: 18px; }
+}

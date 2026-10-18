@@ -49,6 +49,7 @@ API checks: `curl -b "dash_key=$(tr -d '\n' < .dash-key)" <url>/api/...` with th
 ## Frame and kiosk gotchas
 
 - **WebView 106** on the PF1007L (Android 6). No CSS nesting, `:has()`, `color-mix()` or `oklch()`. Test layouts at 1280×800.
+- **Two layouts**: an inline script in `index.html` sets `html[data-layout]`. `wall` (the kiosk: `window.HomeHQ` or an Android WebView UA) keeps the fixed, scaled 1280×800 stage plus idle, ambient and night. `fluid` (phones, iPads, desktop browsers) is responsive, with breakpoints at 768 and 1024 px, and phones get a bottom tab bar. Scope every responsive rule to `[data-layout="fluid"]` (one block at the end of each CSS file) so the wall screens never change. Use `App.wall` and `App.scale()` in JS. Force a layout with `?wall` or `?fluid`.
 - **Big canvases**: the frame's GPU canvas loses its blue channel at A4 size (white turns yellow, text vanishes). Use `getContext('2d', { willReadFrequently: true })`.
 - **Touch**: the `gslX680` panel merges two nearby fingers into one. The controls menu also opens with one finger held 3 s on the top-left corner.
 - **Kiosk min SDK 22**: the Fire tablet runs Android 5.1. Avoid API 23 calls (e.g. `checkSelfPermission`; use `checkPermission`).

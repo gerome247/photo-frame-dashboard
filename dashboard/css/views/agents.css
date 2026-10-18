@@ -72,3 +72,16 @@
 .ag-breakdown { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; font-size: 15px; color: var(--ink-2); }
 .ag-breakdown .ag-label { width: 100%; }
 .ag-empty { flex: 1; display: grid; place-items: center; font-size: 36px; color: var(--mute); }
+
+/* ---- fluid layout (phones, iPads, desktop browsers; see base.css) */
+@media (max-width: 1023px) {
+  [data-layout="fluid"] .agents { height: auto; min-height: 100%; }
+  [data-layout="fluid"] .ag-grid { flex: none; grid-template-columns: 1fr 1fr; grid-template-rows: none; grid-auto-rows: minmax(300px, auto); }
+  [data-layout="fluid"] .ag-chart { min-height: 140px; }
+}
+@media (max-width: 767px) {
+  [data-layout="fluid"] .ag-top { flex-wrap: wrap; gap: 10px; }
+  [data-layout="fluid"] .ag-top h1 { font-size: 40px; }
+  [data-layout="fluid"] .ag-grid { grid-template-columns: 1fr; grid-auto-rows: auto; }
+  [data-layout="fluid"] .ag-card { min-height: 0; }
+}

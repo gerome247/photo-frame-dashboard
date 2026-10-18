@@ -27,3 +27,14 @@
 .nt-line { margin-top: 34px; font-size: 26px; display: flex; align-items: center; justify-content: center; gap: 10px; color: #A02618; }
 .nt-line b { color: #C22C1C; }
 .nt-lock { margin-top: 18px; font-size: 18px; display: flex; align-items: center; justify-content: center; gap: 8px; color: #7A1D12; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+
+/* ---- fluid layout: ambient and night only start on the wall screens, but can be opened from the
+   demo controls on a desktop, so keep them on screen on a phone too */
+@media (max-width: 767px) {
+  [data-layout="fluid"] .amb-info { left: 20px; right: 20px; bottom: 28px; flex-wrap: wrap; gap: 16px; }
+  [data-layout="fluid"] .amb-time { font-size: 110px; }
+  [data-layout="fluid"] .amb-date { font-size: 24px; }
+  [data-layout="fluid"] .amb-right { align-items: flex-start; }
+  [data-layout="fluid"] .nt-time { font-size: 120px; }
+  [data-layout="fluid"] .nt-line { font-size: 18px; }
+}

@@ -185,3 +185,81 @@
 .more-row i { width: 14px; height: 14px; border-radius: 50%; background: var(--c); }
 .more-row b { font-size: 21px; flex: 1; }
 .more-row span { font-size: 16px; color: var(--mute); }
+
+/* ---- fluid layout (phones, iPads, desktop browsers; see base.css) */
+/* pan-y lets horizontal swipes (previous / next) reach the swipe handler on touch screens */
+[data-layout="fluid"] .cal-body { touch-action: pan-y pinch-zoom; }
+@media (max-width: 1023px) {
+  [data-layout="fluid"] .cal-head { flex-wrap: wrap; height: auto; row-gap: 8px; }
+  [data-layout="fluid"] .cal-title { min-width: 0; flex: 1 1 auto; }
+}
+@media (max-width: 767px) {
+  [data-layout="fluid"] #view-calendar { padding-top: 10px; }
+  /* header: ‹ title › + on one row, Today and the view switcher below */
+  [data-layout="fluid"] .cal-head { gap: 6px; margin-bottom: 10px; }
+  [data-layout="fluid"] .cal-head .icon-btn,
+  [data-layout="fluid"] .cal-head .fab { width: 44px; height: 44px; }
+  [data-layout="fluid"] .cal-head .fab { order: 4; margin-left: 6px; }
+  [data-layout="fluid"] .cal-head [data-today] { order: 5; min-height: 44px; padding: 0 14px; margin-right: 0; }
+  [data-layout="fluid"] .cal-head [data-today].is-hidden { display: none; }
+  [data-layout="fluid"] .cal-head .seg { order: 6; flex: 1 1 100%; display: flex; }
+  [data-layout="fluid"] .cal-head .seg button { flex: 1; min-height: 40px; padding: 0 8px; font-size: 13px; }
+  [data-layout="fluid"] .cal-title { order: 2; flex: 1 1 0; padding: 0 2px; flex-direction: column; gap: 2px; }
+  [data-layout="fluid"] .cal-title .serif { font-size: 24px; }
+  [data-layout="fluid"] .cal-head [data-nav="1"] { order: 3; }
+
+  /* time grid: narrow lanes, compact events */
+  [data-layout="fluid"] .lane-head { padding: 0 4px 8px; gap: 6px; margin: 0 2px; }
+  [data-layout="fluid"] .lane-head b { font-size: 15px; }
+  [data-layout="fluid"] .day-head { padding: 0 6px 6px; gap: 4px; margin: 0 2px; flex-wrap: wrap; }
+  [data-layout="fluid"] .day-head .num { font-size: 22px; }
+  [data-layout="fluid"] .day-head b { font-size: 13px; }
+  [data-layout="fluid"] .day-head small { display: none; }
+  [data-layout="fluid"] .allday-grid { gap: 4px; }
+  [data-layout="fluid"] .ad { min-height: 36px; padding: 0 8px; font-size: 13px; }
+  [data-layout="fluid"] .ev { padding: 5px 6px; border-radius: 8px; }
+  [data-layout="fluid"] .ev-title { font-size: 13px; padding-right: 0; }
+  [data-layout="fluid"] .ev-meta { font-size: 11px; }
+  [data-layout="fluid"] .ev.is-short .ev-title { font-size: 12px; max-width: 100%; flex: 1; min-width: 0; }
+  [data-layout="fluid"] .ev.is-short .ev-meta,
+  [data-layout="fluid"] .ev-with { display: none; }
+  [data-layout="fluid"] .ev--more { font-size: 16px; }
+  [data-layout="fluid"] .ev--more small { display: none; }
+  [data-layout="fluid"] .now-line span { font-size: 12px; padding: 2px 4px; right: calc(100% + 6px); top: -11px; }
+  [data-layout="fluid"] .cal-empty { font-size: 30px; }
+
+  /* week: one day per row instead of seven columns */
+  [data-layout="fluid"] .cal--week .cal-body { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  [data-layout="fluid"] .week { grid-template-columns: 1fr; height: auto; gap: 16px; padding-bottom: 12px; }
+  [data-layout="fluid"] .wk-head { margin-bottom: 2px; }
+  [data-layout="fluid"] .wk-ev { min-height: 52px; flex-direction: row; align-items: baseline; gap: 10px; }
+  [data-layout="fluid"] .wk-t { flex: none; min-width: 56px; }
+  [data-layout="fluid"] .wk-n { font-size: 16px; }
+  [data-layout="fluid"] .wk-free { font-size: 18px; padding: 4px 10px; }
+
+  /* month: smaller numbers and dots */
+  [data-layout="fluid"] .mo-dow { gap: 3px; }
+  [data-layout="fluid"] .mo-dow .label { padding-left: 4px; font-size: 11px; letter-spacing: .04em; }
+  [data-layout="fluid"] .mo-grid { gap: 3px; }
+  [data-layout="fluid"] .mo-cell { padding: 4px 5px; border-radius: 8px; }
+  [data-layout="fluid"] .mo-cell .num { font-size: 16px; }
+  [data-layout="fluid"] .mo-dots { gap: 2px; }
+  [data-layout="fluid"] .mo-dots i { width: 7px; height: 7px; }
+  [data-layout="fluid"] .mo-dots em { font-size: 10px; }
+
+  /* event, add and "who" sheets */
+  [data-layout="fluid"] .evs-band { padding: 24px 18px 20px; }
+  [data-layout="fluid"] .evs-band h2 { font-size: 40px; }
+  [data-layout="fluid"] .evs-time { font-size: 24px; }
+  [data-layout="fluid"] .evs-body { padding: 10px 18px 20px; }
+  [data-layout="fluid"] .evs-row { min-height: 60px; gap: 14px; }
+  [data-layout="fluid"] .evs-notes { font-size: 20px; padding-top: 14px; }
+  [data-layout="fluid"] .big-input { height: 60px; font-size: 34px; }
+  [data-layout="fluid"] .add .label { margin: 16px 0 8px; }
+  [data-layout="fluid"] .add-who { flex-wrap: wrap; gap: 6px; }
+  [data-layout="fluid"] .who-btn { flex: 1 1 28%; min-width: 0; padding: 8px 6px; font-size: 15px; }
+  [data-layout="fluid"] .add-who--big .who-btn { font-size: 17px; padding: 10px 6px; }
+  [data-layout="fluid"] .add-row { flex-direction: column; gap: 0; }
+  [data-layout="fluid"] .more-row { min-height: 60px; padding: 0 14px; }
+  [data-layout="fluid"] .more-row b { font-size: 18px; }
+}

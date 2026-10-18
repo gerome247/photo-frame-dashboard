@@ -92,3 +92,36 @@
 .ce-foot { display: flex; justify-content: flex-end; gap: 12px; margin-top: 16px; }
 .ce-foot .ce-del { margin-right: auto; color: var(--alert); border-color: var(--alert); }
 .ce-hint { text-transform: none; letter-spacing: 0; font-weight: 600; color: var(--mute); }
+
+/* ---- fluid layout (phones, iPads, desktop browsers; see base.css) */
+/* Narrow screens: the person lanes scroll sideways and snap, three (tablet) or one (phone) at a time */
+@media (max-width: 1023px) {
+  [data-layout="fluid"] .t-head { flex-wrap: wrap; gap: 14px 20px; }
+  [data-layout="fluid"] .ch-lanes {
+    grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: calc((100% - 24px) / 3);
+    overflow-x: auto; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch;
+  }
+  [data-layout="fluid"] .ch-lane { scroll-snap-align: start; }
+}
+@media (max-width: 767px) {
+  [data-layout="fluid"] .tasks { height: auto; min-height: 100%; }
+  [data-layout="fluid"] .t-head { gap: 12px; margin-bottom: 14px; }
+  [data-layout="fluid"] .t-title { order: 1; flex: 1 1 auto; min-width: 0; }
+  [data-layout="fluid"] .t-title h1 { font-size: 40px; }
+  [data-layout="fluid"] .t-progress { order: 2; gap: 8px; }
+  [data-layout="fluid"] .t-progress > .num { font-size: 40px; }
+  [data-layout="fluid"] .t-progress small { font-size: 20px; }
+  [data-layout="fluid"] .t-bar { width: 56px; }
+  [data-layout="fluid"] .t-head > .seg { order: 3; flex: 1 1 100%; display: flex; }
+  [data-layout="fluid"] .t-head > .seg button { flex: 1; }
+  [data-layout="fluid"] .t-actions { order: 4; flex: 1 1 100%; }
+  [data-layout="fluid"] .t-actions .btn { flex: 1; }
+  [data-layout="fluid"] .ch-lanes { flex: 1 0 420px; grid-auto-columns: 86%; gap: 10px; }
+
+  /* chore editor */
+  [data-layout="fluid"] .sheet-pad.ce { padding: 20px 16px; }
+  [data-layout="fluid"] .ce .big-input { height: 54px; font-size: 32px; }
+  [data-layout="fluid"] .ce-days { flex-wrap: wrap; gap: 6px; }
+  [data-layout="fluid"] .ce-days button { width: 40px; height: 40px; font-size: 16px; }
+  [data-layout="fluid"] .ce-days .ce-every { margin-left: 0; height: 40px; white-space: nowrap; }
+}

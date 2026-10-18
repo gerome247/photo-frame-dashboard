@@ -5,6 +5,9 @@
   var App = window.App = { state: D, views: {}, current: null, mode: 'day', calMode: 'normal' };
   var $ = App.$ = function (s, r) { return (r || document).querySelector(s); };
   App.$$ = function (s, r) { return Array.prototype.slice.call((r || document).querySelectorAll(s)); };
+  // Wall screens (frame, Fire tablet) keep the fixed, scaled 1280×800 stage plus idle, ambient and
+  // night modes. Everything else (phones, iPads, desktops) is fluid. Set in index.html.
+  App.wall = document.documentElement.getAttribute('data-layout') !== 'fluid';
 
   // ------------------------------------------------------------ events
   var handlers = {};
@@ -175,6 +178,8 @@
     if (App.current && App.current !== name && App.views[App.current].hide) App.views[App.current].hide();
     App.$$('.view').forEach(function (v) { v.classList.toggle('is-active', v.dataset.view === name); });
     App.$$('.rail-item').forEach(function (b) { b.classList.toggle('is-active', b.dataset.go === name); });
+    var more = $('.rail-item--more[data-go="' + name + '"]');
+    $('.rail-more').classList.toggle('is-current', !!more);
     App.current = name;
     var view = App.views[name];
     if (!view._built || view._dirty || opts.rerender || (view.minutely && view._min !== minuteKey())) build(name, opts);
@@ -256,9 +261,11 @@
   };
   App.closeSheet = function () {};
 
-  // Stage-local coordinates for an element's center (stage may be scaled on desktop)
+  // How much the stage is scaled on screen (only the wall stage is; the fluid layout is 1:1)
+  App.scale = function () { return App.wall ? $('#stage').getBoundingClientRect().width / 1280 : 1; };
+  // Stage-local coordinates for an element's center
   App.centerOf = function (el) {
-    var stage = $('#stage').getBoundingClientRect(), r = el.getBoundingClientRect(), k = stage.width / 1280;
+    var stage = $('#stage').getBoundingClientRect(), r = el.getBoundingClientRect(), k = App.scale();
     return { x: (r.left + r.width / 2 - stage.left) / k, y: (r.top + r.height / 2 - stage.top) / k };
   };
 
@@ -294,6 +301,7 @@
   App.idle = { home: 60, ambient: 120 };
   var idleSec = 0;
   function onIdleTick() {
+    if (!App.wall) return; // phones and desktops stay where the user left them
     idleSec++;
     var blocked = $('#takeover').classList.contains('is-open');
     if (App.mode === 'nightdash' && idleSec >= 20) { App.setMode('night'); return; }
@@ -307,7 +315,24 @@
   }
   App.resetIdle = function () { idleSec = 0; };
 
-  // ------------------------------------------------------------ stage scaling (desktop preview only)
+  // ------------------------------------------------------------ "More" tabs (phone tab bar)
+  // The phone tab bar shows the main tabs; the rest (rail-item--more) open from this sheet.
+  function moreSheet() {
+    App.sheet('<div class="sheet-pad"><h2 class="serif sheet-h">More</h2><div class="more-tabs">' +
+      App.$$('.rail-item--more').map(function (b) {
+        return '<button class="more-tab' + (b.dataset.go === App.current ? ' is-on' : '') + '" data-tab="' + b.dataset.go + '">' + b.innerHTML + '</button>';
+      }).join('') + '</div></div>', {
+      cls: 'sheet--more',
+      onMount: function (s, close) {
+        s.addEventListener('click', function (e) {
+          var b = e.target.closest('[data-tab]');
+          if (b) { close(); App.go(b.dataset.tab); }
+        });
+      }
+    });
+  }
+
+  // ------------------------------------------------------------ stage scaling (wall screens only)
   function fit() {
     var s = Math.min(window.innerWidth / 1280, window.innerHeight / 800);
     $('#stage').style.transform = Math.abs(s - 1) < 0.01 ? '' : 'scale(' + s + ')';
@@ -329,8 +354,11 @@
   // ------------------------------------------------------------ boot
   App.start = function () {
     App.setTime(); // real time (was the 3:18 PM demo default)
-    fit();
-    window.addEventListener('resize', fit);
+    if (App.wall) {
+      fit();
+      window.addEventListener('resize', fit);
+    }
+    $('.rail-more').addEventListener('click', moreSheet);
     // Switch tabs the instant a finger lands (pointerdown), not on release. Keyboard "clicks"
     // (detail === 0) still work.
     $('#rail').addEventListener('pointerdown', function (e) {
@@ -348,7 +376,7 @@
     setInterval(tick, 1000);
     App.emit('ready');
     refreshStale(1500);
-    setTimeout(function () { App.toast('Tip: press and hold the <b>clock</b> in the sidebar for demo controls', { ms: 6000, icon: 'bolt' }); }, 1200);
+    if (App.wall) setTimeout(function () { App.toast('Tip: press and hold the <b>clock</b> in the sidebar for demo controls', { ms: 6000, icon: 'bolt' }); }, 1200);
   };
   // Started by main.js once live data and all views have loaded.
 })();

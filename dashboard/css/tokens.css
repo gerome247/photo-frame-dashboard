@@ -46,3 +46,33 @@
   --ease: cubic-bezier(.2, .8, .2, 1);
   --spring: cubic-bezier(.34, 1.56, .64, 1);
 }
+
+/* Fluid layout (phones, iPads, desktop browsers; html[data-layout="fluid"], set in index.html).
+   The wall screens never get this attribute, so they keep the values above. */
+@media (max-width: 1023px) {
+  [data-layout="fluid"] {
+    --fs-clock: 120px;
+    --fs-hero: 64px;
+    --fs-xl: 46px;
+    --fs-l: 30px;
+    --fs-m: 22px;
+    --pad: 20px;
+  }
+}
+@media (max-width: 767px) {
+  [data-layout="fluid"] {
+    --fs-clock: 88px;
+    --fs-hero: 48px;
+    --fs-xl: 36px;
+    --fs-l: 26px;
+    --fs-m: 20px;
+    --fs-body: 17px;
+    --fs-label: 13px;
+    --fs-min: 13px;
+    --r: 16px;
+    --gap: 12px;
+    --pad: 16px;
+    --tap: 48px;
+    --tabbar: 62px;
+  }
+}

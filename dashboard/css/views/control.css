@@ -168,3 +168,41 @@
 .uf-card .th-boost.is-on { background: #042E2C; color: #14A39A; }
 .uf-card .th-msg { color: rgba(4, 46, 44, .75); }
 .uf-card .th-msg b { color: #042E2C; }
+
+/* ---- fluid layout (phones, iPads, desktop browsers; see base.css) */
+/* Narrow screens: rooms first, then the climate / camera / media column underneath */
+@media (max-width: 1023px) {
+  [data-layout="fluid"] .hc { grid-template-columns: 1fr; height: auto; min-height: 100%; align-content: start; }
+  [data-layout="fluid"] .hc-rooms { flex: none; overflow: visible; padding-bottom: 8px; }
+  [data-layout="fluid"] .hc-right { display: grid; grid-template-columns: 1fr 1fr; align-items: start; overflow: visible; }
+  [data-layout="fluid"] .hc-neo.is-on { display: flex; }
+  [data-layout="fluid"] .hc-media { margin-top: 0; }
+  [data-layout="fluid"] .tiles, [data-layout="fluid"] .tiles--sheet { grid-template-columns: repeat(3, 1fr); }
+}
+@media (max-width: 767px) {
+  [data-layout="fluid"] .hc { gap: 14px; }
+  [data-layout="fluid"] .hc-sum, [data-layout="fluid"] .hc-sum--3 { grid-template-columns: 1fr 1fr; gap: 10px; }
+  [data-layout="fluid"] .sum { min-height: 96px; padding: 12px 14px; }
+  [data-layout="fluid"] .sum b { font-size: 36px; }
+  [data-layout="fluid"] .hc-scenes { flex-wrap: wrap; gap: 8px; }
+  [data-layout="fluid"] .scene { flex: 1 1 40%; font-size: 15px; }
+  [data-layout="fluid"] .room-h h3 { font-size: 26px; }
+  [data-layout="fluid"] .tiles, [data-layout="fluid"] .tiles--sheet { grid-template-columns: 1fr 1fr; gap: 8px; }
+  [data-layout="fluid"] .tile { min-height: 108px; padding: 12px 14px; }
+  /* one column, Hive (and the underfloor card) first, then the summary, scenes and rooms */
+  [data-layout="fluid"] .hc-left, [data-layout="fluid"] .hc-right { display: contents; }
+  [data-layout="fluid"] .hc-climate { order: 1; }
+  [data-layout="fluid"] .hc-neo { order: 2; }
+  [data-layout="fluid"] .hc-sum { order: 3; }
+  [data-layout="fluid"] .hc-scenes { order: 4; }
+  [data-layout="fluid"] .hc-rooms { order: 5; }
+  [data-layout="fluid"] .hc-cams { order: 6; }
+  [data-layout="fluid"] .hc-media { order: 7; }
+  [data-layout="fluid"] .hc-cams:empty { display: none; }
+  [data-layout="fluid"] .th-btn { width: 64px; height: 64px; }
+  [data-layout="fluid"] .th-set .num { font-size: 88px; }
+  [data-layout="fluid"] .uf-card .th-btn { width: 60px; height: 60px; }
+  [data-layout="fluid"] .uf-card .th-set .num { font-size: 76px; }
+  [data-layout="fluid"] .np-ctrls { gap: 16px; }
+  [data-layout="fluid"] .sc-label { font-size: 16px; }
+}

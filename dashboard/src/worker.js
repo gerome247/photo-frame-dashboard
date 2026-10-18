@@ -1171,7 +1171,7 @@ async function ringSnapshot(request, env, url) {
 }
 
 // ------------------------------------------------------------ Phone sign-in
-// A QR code for the iPhone camera. The code is a phone link stored in D1, not the household
+// A QR code for a phone camera. The code is a phone link stored in D1, not the household
 // key. It is not written into the page as text, and it is not cached.
 const PHONE_LINK = 'phone_link';
 let phoneLinkCache = '';
@@ -1557,7 +1557,7 @@ function phoneManifest(token) {
     start_url: '/' + q,
     scope: '/',
     display: 'fullscreen',
-    orientation: 'landscape',
+    orientation: 'any',
     background_color: '#F2EEE6',
     theme_color: '#F2EEE6',
     icons: [
