@@ -1,0 +1,44 @@
+/* Ring — newest still and recent doorbell events. WebView 106: no nesting, no color-mix, no oklch. */
+.ring { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+.ring-top { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 16px; flex: none; }
+.ring-top h1 { font-size: 64px; line-height: .95; }
+.ring-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; min-width: 0; }
+.ring-pills { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; max-width: 560px; }
+.ring-pills button {
+  min-height: 56px; padding: 0 18px; border-radius: 999px;
+  background: var(--card); border: 2px solid var(--line);
+  font-size: 18px; font-weight: 800; letter-spacing: .02em;
+}
+.ring-pills button.is-on { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+
+.ring-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 340px; gap: 20px; }
+.ring-photo { position: relative; background: #111111; border-radius: 18px; overflow: hidden; min-height: 0; }
+.ring-shot { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: cover; }
+.ring-photo.is-waiting .ring-shot { opacity: 0; }
+.ring-wait {
+  display: none; position: absolute; left: 24px; right: 24px; top: 34%;
+  text-align: center; color: rgba(255, 255, 255, .78); font-size: 36px;
+}
+.ring-photo.is-waiting .ring-wait { display: block; }
+.ring-cap {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  padding: 16px 20px 18px; background: rgba(0, 0, 0, .55); color: #fff;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.ring-cap b { font-size: 32px; font-weight: 800; line-height: 1.05; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ring-cap span { font-size: 18px; font-weight: 700; color: rgba(255, 255, 255, .82); }
+.ring-cap .is-missed { color: #ffb4b0; }
+
+.ring-side { min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 8px; }
+.ring-ev {
+  background: var(--card); border-radius: 14px; padding: 14px 16px;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex: none;
+}
+.ring-ev b { font-size: 22px; font-weight: 800; line-height: 1.1; }
+.ring-ev span { font-size: 16px; font-weight: 700; color: var(--mute); white-space: nowrap; }
+.ring-ev.is-missed b { color: var(--alert); }
+.ring-none { margin: 8px 0 0; font-size: 22px; color: var(--mute); }
+
+.ring-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 10px; }
+.ring-empty .serif { font-size: 48px; line-height: 1.05; }
+.ring-empty p { color: var(--mute); font-size: 22px; max-width: 640px; }

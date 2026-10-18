@@ -14,6 +14,11 @@ export default defineConfig({
   build: {
     target: 'chrome106',
     cssTarget: 'chrome61',
+    // One script, so the iPhone page can sign its own files in. The views are imported
+    // before the app starts anyway, so they were never a later download.
+    rollupOptions: {
+      output: { inlineDynamicImports: true },
+    },
   },
   server: { host: true },
 });

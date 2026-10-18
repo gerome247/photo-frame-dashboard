@@ -152,13 +152,35 @@
       }).join('') + '</ul>';
   }
 
-  // Real home status when Hive / Spotify are connected (js/live.js), else Wes's demo.
+  // Real home status when Hive / Hue / underfloor / Spotify are connected (js/live.js), else Wes's demo.
   function status() {
-    if (!D.hive) return '<div class="label">Home</div><div class="h-st-row"><span>Loading…</span></div>'; // until js/live.js reports
+    if (!D.hive || D.hue == null || D.neo == null) return '<div class="label">Home</div><div class="h-st-row"><span>Loading…</span></div>'; // until js/live.js reports
     var h = D.hive.configured && D.hive.heating;
-    if (!h) return D.hive.configured ? '<div class="label">Home</div><div class="h-st-row is-warn"><span>Can’t reach Hive</span></div>' : demoStatus();
-    var rows = '<div class="h-st-row">' + App.icon('thermo', 24) + '<b class="num">' + (h.current == null ? '–' : h.current.toFixed(1)) + '°</b><span>' +
+    var hueOn = D.hue.configured;
+    var neoOn = D.neo.configured;
+    if (!h && !hueOn && !neoOn) return D.hive.configured ? '<div class="label">Home</div><div class="h-st-row is-warn"><span>Can’t reach Hive</span></div>' : demoStatus();
+    var rows = '';
+    if (h) rows += '<div class="h-st-row">' + App.icon('thermo', 24) + '<b class="num">' + (h.current == null ? '–' : h.current.toFixed(1)) + '°</b><span>' +
       (h.mode === 'OFF' ? 'heating off' : (h.working ? 'heating' : 'idle') + ' · set ' + h.target + '°') + '</span></div>';
+    else if (D.hive.configured && D.hive.error) rows += '<div class="h-st-row is-warn"><span>Can’t reach Hive</span></div>';
+    if (neoOn) {
+      var zones = D.neo.zones || [];
+      if (D.neo.error && !zones.length) rows += '<div class="h-st-row is-warn">' + App.icon('thermo', 24) + '<span>Can’t reach underfloor</span></div>';
+      else {
+        var hot = zones.filter(function (z) { return z.heating && !z.offline; }).length;
+        rows += '<div class="h-st-row">' + App.icon('thermo', 24) + (hot
+          ? '<b class="num">' + hot + '</b><span>' + (hot === 1 ? 'underfloor zone on' : 'underfloor zones on') + '</span>'
+          : '<span>underfloor idle</span>') + '</div>';
+      }
+    }
+    if (hueOn) {
+      if (D.hue.error && !D.hue.lights) rows += '<div class="h-st-row is-warn">' + App.icon('bulb', 24) + '<span>Can’t reach Hue</span></div>';
+      else {
+        var on = (D.hue.lights || []).filter(function (l) { return l.on && l.online !== false; }).length;
+        rows += '<div class="h-st-row">' + App.icon('bulb', 24) + '<b class="num">' + on + '</b><span>' + (on === 1 ? 'light on' : 'lights on') + '</span></div>';
+      }
+    }
+    // The Hive bulb is a different light from the Hue rooms, so it keeps its own row.
     (D.hive.lights || []).forEach(function (l) {
       rows += '<div class="h-st-row">' + App.icon('bulb', 24) + '<span>' + App.esc(l.name) + ' · ' + (!l.online ? 'offline' : l.on ? 'on' + (l.brightness ? ' ' + l.brightness + '%' : '') : 'off') + '</span></div>';
     });

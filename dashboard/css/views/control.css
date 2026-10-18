@@ -1,9 +1,10 @@
 /* Home control */
 .hc { height: 100%; display: grid; grid-template-columns: 1fr 360px; gap: 20px; }
 .hc-left { display: flex; flex-direction: column; gap: 14px; min-height: 0; }
-.hc-right { display: flex; flex-direction: column; gap: 14px; min-height: 0; }
+.hc-right { display: flex; flex-direction: column; gap: 14px; min-height: 0; overflow-y: auto; }
 
 .hc-sum { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; flex: none; }
+.hc-sum--3 { grid-template-columns: repeat(3, 1fr); }
 .sum { min-height: 120px; padding: 14px 16px; border-radius: var(--r); background: var(--card); display: flex; flex-direction: column; text-align: left; }
 .sum:active { transform: scale(.97); }
 .sum b { font-size: 48px; line-height: .95; margin-top: 4px; }
@@ -143,3 +144,27 @@
 .hc-climate.is-hive .th-boost.is-on { background: #4A2200; color: #FFA41B; }
 .hc-climate.is-hive .th-msg { color: rgba(74, 34, 0, .75); }
 .hc-climate.is-hive .th-msg b { color: #4A2200; }
+
+/* Heatmiser underfloor (js/views/control.js). Hidden until a neoHub is connected.
+   Same layout as the Hive card, in Heatmiser teal, stacked under it. */
+.hc-neo { display: none; }
+.hc-neo.is-on { display: flex; flex-direction: column; gap: 14px; flex: none; min-height: 0; }
+.uf-card { background: #14A39A; color: #042E2C; border-radius: var(--r); padding: 18px 16px 20px; display: flex; flex-direction: column; gap: 14px; }
+.uf-card.is-off { opacity: .55; }
+.uf-card > .label { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.uf-card .label--light { color: rgba(4, 46, 44, .7); }
+.uf-card .th-btn { width: 72px; height: 72px; background: rgba(4, 46, 44, .12); color: #042E2C; }
+.uf-card .th-set .num { font-size: 96px; }
+.uf-card .th-btn:active { background: rgba(4, 46, 44, .22); }
+.uf-card .th-set small { opacity: .75; }
+.uf-card .th-now { color: rgba(4, 46, 44, .75); }
+.uf-card .th-now b { color: #042E2C; }
+.uf-card .th-src { color: rgba(4, 46, 44, .55); }
+.uf-card .th-verb { background: rgba(4, 46, 44, .14); color: #042E2C; }
+.uf-card .th-verb--heating { background: #042E2C; color: #14A39A; }
+.uf-card .th-verb--frost { background: #042E2C; color: #B7F4EF; }
+.uf-card .th-verb--offline { background: rgba(4, 46, 44, .08); color: rgba(4, 46, 44, .55); }
+.uf-card .th-boost { width: 100%; background: rgba(4, 46, 44, .12); color: #042E2C; }
+.uf-card .th-boost.is-on { background: #042E2C; color: #14A39A; }
+.uf-card .th-msg { color: rgba(4, 46, 44, .75); }
+.uf-card .th-msg b { color: #042E2C; }

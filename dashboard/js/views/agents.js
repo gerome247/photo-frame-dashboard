@@ -29,13 +29,13 @@
   function agentsFrom(data) {
     return (data.agents || []).filter(function (a) { return LOOK[a.id]; }).map(function (a) {
       var look = LOOK[a.id], st = (data.status || {})[a.id], meters = [];
-      if (a.session) meters.push({ label: 'Session · 5 hours', win: H5, used: a.session.used, resets: a.session.resets });
-      if (a.weekly) meters.push({ label: 'Weekly · all models', win: WEEK, used: a.weekly.used, resets: a.weekly.resets });
+      if (a.session) meters.push({ label: a.session.label || 'Session · 5 hours', win: H5, used: a.session.used, resets: a.session.resets });
+      if (a.weekly) meters.push({ label: a.weekly.label || 'Weekly · all models', win: WEEK, used: a.weekly.used, resets: a.weekly.resets });
       return {
         id: a.id, name: look.name, color: look.color, rgb: look.rgb, plan: a.plan || '',
         status: st ? (st.indicator === 'none' ? 'ok' : 'degraded') : null,
         incident: st && st.indicator !== 'none' ? (st.incident || st.description) : '',
-        meters: meters, note: a.note || (a.id === 'grok' ? 'xAI doesn’t publish subscription usage, so there’s nothing to measure yet.' : ''),
+        meters: meters, note: a.note || (a.id === 'grok' && !a.session && !a.weekly && !a.tokensWeek ? 'xAI doesn’t publish subscription usage, so there’s nothing to measure yet.' : ''),
         breakdown: a.breakdown || [], week: a.tokensWeek || null
       };
     });
@@ -80,6 +80,12 @@
       '</section>';
   }
 
+  function weekSource(list) {
+    var names = list.map(function (a) { return a.id === 'claude' ? 'Claude Code' : a.id === 'grok' ? 'Grok Build' : a.name; });
+    if (names.length < 2) return (names[0] || 'This PC') + ' on this PC';
+    return names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1] + ' on this PC';
+  }
+
   function summary() {
     var withWeek = D.agents.filter(function (a) { return a.week; });
     if (!withWeek.length) return '';
@@ -94,7 +100,7 @@
         '</div><span>' + (i === 6 ? 'Today' : App.fmt.dayShort(d)) + '</span></div>';
     }).join('');
     return '<section class="ag-card ag-sum">' +
-      '<header class="ag-head"><div class="ag-id"><b>Last 7 days</b><span class="ag-plan">Claude Code on the PC</span></div></header>' +
+      '<header class="ag-head"><div class="ag-id"><b>Last 7 days</b><span class="ag-plan">' + App.esc(weekSource(withWeek)) + '</span></div></header>' +
       '<div class="ag-sum-stats"><div><span class="num">' + fmtTokens(week) + '</span><small>tokens</small></div>' +
       '<div><span class="num">' + fmtTokens(week / 7) + '</span><small>a day on average</small></div></div>' +
       '<div class="ag-chart">' + bars + '</div>' +

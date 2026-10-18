@@ -1,6 +1,12 @@
+import { renderSVG } from 'uqr';
+
 // Gatekeeper for the dashboard: nothing (not even index.html) is served without the key.
-// - Visit /?key=<DASH_KEY> once: sets a long-lived cookie and redirects to the clean URL.
-// - After that the cookie is enough. Wrong/missing key → 404, so the site looks empty.
+// - The frame visits /?key=<DASH_KEY> once: a redirect sets a long-lived cookie and opens
+//   the clean URL. Safari on the iPhone drops a cookie set that way, so the Phone tab does
+//   not use it.
+// - The Phone tab's code is a separate /?phone= link stored in D1. That address opens the
+//   dashboard itself, and the files on that page carry the same link, so bookmarking it
+//   signs the phone in again. Wrong or missing key → 404, so the site looks empty.
 // Set the key with: npx wrangler secret put DASH_KEY
 
 const COOKIE = 'dash_key';
@@ -249,8 +255,8 @@ async function chores(request, env, url) {
 }
 
 // ------------------------------------------------------------ agents (AI plan usage)
-// The PC pushes usage numbers (scripts/agents-push.mjs reads the Claude Code login and logs
-// there, so no AI account token ever reaches Cloudflare). Kept in D1; the live service status
+// The PC pushes usage numbers (scripts/agents-push.mjs reads the Claude Code and Grok Build
+// logins and their local logs, so no AI account token ever reaches Cloudflare). Kept in D1; the live service status
 // comes from the providers' public status pages.
 //   GET  /api/agents          -> { updated, agents: [...], status: { claude: {...} } }
 //   POST /api/agents { ... }  -> stores the PC's numbers
@@ -423,6 +429,807 @@ async function hive(request, env) {
     console.error('hive', err.message);
     return json({ configured: true, error: err.login ? 'login' : 'Hive unavailable' }, 502);
   }
+}
+
+// ------------------------------------------------------------ Hue (lights)
+// The frame loads this site over HTTPS, so it cannot call a bridge on the LAN. This uses Hue's
+// The frame and this Worker cannot reach a bridge on the home LAN. scripts/hue-bridge.mjs runs on
+// the PC, holds the bridge username, and posts light state to /api/hue/bridge. The dashboard keeps
+// posting to /api/hue; those commands are queued in D1 and the script applies them on the bridge.
+// Stored bridge state wins over the remote API below, which needs secrets from scripts/hue-login.mjs
+// (HUE_CLIENT_ID, HUE_CLIENT_SECRET, HUE_REFRESH_TOKEN, HUE_USERNAME). Hue rotates that refresh
+// token on every refresh, so the new one is kept in D1. One refresh runs at a time.
+//   GET  /api/hue                        -> { configured, lights: [{ id, name, on, brightness, room, roomId }] }
+//   POST /api/hue { action: 'light', id, on, brightness }  -> the same, after the change
+//   POST /api/hue { action: 'allOff' }   -> the same, after every light is turned off
+//   POST /api/hue/bridge { state, ack }  -> { commands } for the PC script only
+// brightness is 0–100. Hue's bri is 1–254. Hue dropped digest auth in 2025; Basic is tried first.
+
+const HUE_API = 'https://api.meethue.com';
+let hueToken = null; // { value, expires }
+let hueFlight = null;
+
+function md5(message) {
+  const msg = new TextEncoder().encode(message);
+  const len = msg.length;
+  const padded = new Uint8Array((((len + 8) >>> 6) << 6) + 64);
+  padded.set(msg);
+  padded[len] = 0x80;
+  const bits = len * 8;
+  const view = new DataView(padded.buffer);
+  view.setUint32(padded.length - 8, bits >>> 0, true);
+  view.setUint32(padded.length - 4, Math.floor(bits / 0x100000000), true);
+  let a0 = 0x67452301, b0 = 0xefcdab89, c0 = 0x98badcfe, d0 = 0x10325476;
+  const K = new Uint32Array(64);
+  const S = [7, 12, 17, 22, 5, 9, 14, 20, 4, 11, 16, 23, 6, 10, 15, 21];
+  for (let i = 0; i < 64; i++) K[i] = Math.floor(Math.abs(Math.sin(i + 1)) * 4294967296) >>> 0;
+  for (let i = 0; i < padded.length; i += 64) {
+    let A = a0, B = b0, C = c0, D = d0;
+    for (let j = 0; j < 64; j++) {
+      let F, g;
+      if (j < 16) { F = (B & C) | (~B & D); g = j; }
+      else if (j < 32) { F = (D & B) | (~D & C); g = (5 * j + 1) % 16; }
+      else if (j < 48) { F = B ^ C ^ D; g = (3 * j + 5) % 16; }
+      else { F = C ^ (B | ~D); g = (7 * j) % 16; }
+      F = (F + A + K[j] + view.getUint32(i + g * 4, true)) >>> 0;
+      const s = S[((j >>> 4) << 2) + (j & 3)];
+      A = D; D = C; C = B;
+      B = (B + ((F << s) | (F >>> (32 - s)))) >>> 0;
+    }
+    a0 = (a0 + A) >>> 0; b0 = (b0 + B) >>> 0; c0 = (c0 + C) >>> 0; d0 = (d0 + D) >>> 0;
+  }
+  const out = new DataView(new ArrayBuffer(16));
+  out.setUint32(0, a0, true); out.setUint32(4, b0, true); out.setUint32(8, c0, true); out.setUint32(12, d0, true);
+  return [...new Uint8Array(out.buffer)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function hueBasic(env) {
+  const raw = new TextEncoder().encode(env.HUE_CLIENT_ID + ':' + env.HUE_CLIENT_SECRET);
+  let s = '';
+  for (let i = 0; i < raw.length; i++) s += String.fromCharCode(raw[i]);
+  return 'Basic ' + btoa(s);
+}
+
+// Token calls take the grant on the query string. A portal that still asks for digest answers
+// the first call with 401 and a nonce; the code or refresh token is only spent on the retry.
+async function hueTokenRequest(env, params) {
+  const path = '/v2/oauth2/token';
+  const url = HUE_API + path + '?' + new URLSearchParams(params);
+  let res = await fetch(url, { method: 'POST', headers: { Authorization: hueBasic(env), Accept: 'application/json' } });
+  const www = res.headers.get('www-authenticate') || '';
+  if (res.status !== 401 || !/digest/i.test(www)) return res;
+  const realm = /realm="([^"]*)"/.exec(www);
+  const nonce = /nonce="([^"]*)"/.exec(www);
+  if (!realm || !nonce) return res;
+  const response = md5(md5(env.HUE_CLIENT_ID + ':' + realm[1] + ':' + env.HUE_CLIENT_SECRET) + ':' + nonce[1] + ':' + md5('POST:' + path));
+  const header = 'Digest username="' + env.HUE_CLIENT_ID + '", realm="' + realm[1] + '", nonce="' + nonce[1] + '", uri="' + path + '", response="' + response + '"';
+  return fetch(url, { method: 'POST', headers: { Authorization: header, Accept: 'application/json' } });
+}
+
+async function hueAccess(env) {
+  if (hueToken && hueToken.expires > Date.now() + 60000) return hueToken.value;
+  if (hueFlight) return hueFlight;
+  const flight = (async () => {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(env.HUE_REFRESH_TOKEN));
+    const slot = 'hue_refresh:' + [...new Uint8Array(digest)].slice(0, 8).map((b) => b.toString(16).padStart(2, '0')).join('');
+    const refresh = (env.SHOPPING && (await kvGet(env.SHOPPING, slot))) || env.HUE_REFRESH_TOKEN;
+    const res = await hueTokenRequest(env, { grant_type: 'refresh_token', refresh_token: refresh });
+    if (!res.ok) throw Object.assign(new Error('hue token ' + res.status), { login: res.status === 400 || res.status === 401 });
+    const t = await res.json();
+    if (!t.access_token) throw Object.assign(new Error('hue token empty'), { login: true });
+    if (t.refresh_token && t.refresh_token !== refresh && env.SHOPPING) await kvPut(env.SHOPPING, slot, t.refresh_token);
+    const expiresIn = Number(t.expires_in || t.access_token_expires_in || 3600);
+    hueToken = { value: t.access_token, expires: Date.now() + expiresIn * 1000 };
+    return hueToken.value;
+  })();
+  hueFlight = flight;
+  try {
+    return await flight;
+  } finally {
+    if (hueFlight === flight) hueFlight = null;
+  }
+}
+
+async function hueApi(env, method, path, body) {
+  const user = env.HUE_USERNAME || '';
+  if (!/^[A-Za-z0-9_-]{10,80}$/.test(user)) throw Object.assign(new Error('hue username'), { login: true });
+  const headers = { Authorization: 'Bearer ' + (await hueAccess(env)), Accept: 'application/json' };
+  if (body) headers['Content-Type'] = 'application/json';
+  const res = await fetch(HUE_API + '/bridge/' + user + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  if (res.status !== 401) return res;
+  hueToken = null;
+  headers.Authorization = 'Bearer ' + (await hueAccess(env));
+  return fetch(HUE_API + '/bridge/' + user + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+}
+
+async function hueOk(res) {
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { /* Hue sometimes returns an empty body */ }
+  const err = Array.isArray(data) ? data.find((x) => x && x.error) : (data && data.error ? data : null);
+  const type = err && err.error ? err.error.type : null;
+  if (!res.ok || err) throw Object.assign(new Error('hue ' + (type || res.status)), { login: res.status === 401 || type === 1 });
+  return data;
+}
+
+function hueLevel(on, bri) {
+  if (bri == null || bri === '') return on ? 100 : 0;
+  const level = Math.round(Number(bri) / 254 * 100);
+  if (on && level < 1) return 1;
+  return Math.max(0, Math.min(100, level));
+}
+
+function hueLabel(v) {
+  return String(v || '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 32);
+}
+
+const HUE_GROUP_RANK = { Room: 0, Zone: 1, LightGroup: 2 };
+
+async function hueState(env) {
+  const lights = await hueOk(await hueApi(env, 'GET', '/lights'));
+  const groups = await hueOk(await hueApi(env, 'GET', '/groups'));
+  const roomOf = {};
+  const rankOf = {};
+  Object.entries(groups || {}).forEach(([id, g]) => {
+    const rank = g && HUE_GROUP_RANK[g.type];
+    if (!/^[0-9]{1,6}$/.test(id) || rank == null || !Array.isArray(g.lights)) return;
+    g.lights.forEach((lid) => {
+      const key = String(lid);
+      if (rankOf[key] == null || rank < rankOf[key]) {
+        rankOf[key] = rank;
+        roomOf[key] = { roomId: id, room: hueLabel(g.name) || 'Room' };
+      }
+    });
+  });
+  const list = Object.entries(lights || {}).filter(([id, l]) => /^[0-9]{1,6}$/.test(id) && l && l.state).map(([id, l]) => {
+    const online = l.state.reachable !== false;
+    return {
+      id,
+      name: hueLabel(l.name) || 'Light',
+      on: online && !!l.state.on,
+      brightness: hueLevel(!!l.state.on, l.state.bri),
+      room: (roomOf[id] && roomOf[id].room) || 'Hue',
+      roomId: (roomOf[id] && roomOf[id].roomId) || 'other',
+      online,
+    };
+  });
+  list.sort((a, b) => (a.room < b.room ? -1 : a.room > b.room ? 1 : a.name < b.name ? -1 : a.name > b.name ? 1 : Number(a.id) - Number(b.id)));
+  return { configured: true, lights: list };
+}
+
+function hueCommand(b) {
+  const id = String(b.id || '');
+  if (!/^[0-9]{1,6}$/.test(id)) return null;
+  const on = !!b.on;
+  const state = { on };
+  if (on && b.brightness != null) {
+    const level = Math.round(Number(b.brightness));
+    if (!(level >= 1 && level <= 100)) return null;
+    state.bri = Math.max(1, Math.min(254, Math.round(level / 100 * 254)));
+  }
+  return { id, state };
+}
+
+async function hueAllOff(env) {
+  try {
+    await hueOk(await hueApi(env, 'PUT', '/groups/0/action', { on: false }));
+  } catch (err) {
+    if (err.login) throw err;
+    const lights = await hueOk(await hueApi(env, 'GET', '/lights'));
+    for (const id of Object.keys(lights || {})) {
+      if (!/^[0-9]{1,6}$/.test(id) || !lights[id] || !lights[id].state || !lights[id].state.on) continue;
+      await hueOk(await hueApi(env, 'PUT', '/lights/' + id + '/state', { on: false }));
+    }
+  }
+}
+
+function hueJson(v, status) {
+  return Response.json(v, { status: status || 200, headers: { 'Cache-Control': 'private, no-store' } });
+}
+
+function hueCloud(env) {
+  return !!(env.HUE_CLIENT_ID && env.HUE_CLIENT_SECRET && env.HUE_REFRESH_TOKEN && env.HUE_USERNAME);
+}
+
+function hueRoomId(v) {
+  const s = String(v || 'other').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 24);
+  return s || 'other';
+}
+
+function sanitizeHueLights(list) {
+  if (!Array.isArray(list)) return null;
+  const out = [];
+  const seen = new Set();
+  for (const l of list) {
+    if (out.length >= 200) break;
+    if (!l || typeof l !== 'object') continue;
+    const id = String(l.id ?? '');
+    if (!/^[0-9]{1,6}$/.test(id) || seen.has(id)) continue;
+    seen.add(id);
+    const online = l.online !== false;
+    const on = online && !!l.on;
+    let brightness = Math.round(Number(l.brightness));
+    if (!(brightness >= 0 && brightness <= 100)) brightness = on ? 100 : 0;
+    out.push({
+      id,
+      name: hueLabel(l.name) || 'Light',
+      on,
+      brightness,
+      room: hueLabel(l.room) || 'Hue',
+      roomId: hueRoomId(l.roomId),
+      online,
+    });
+  }
+  return out;
+}
+
+function hueDashCommand(b) {
+  if (!b || typeof b !== 'object') return null;
+  if (b.action === 'allOff') return { id: crypto.randomUUID(), action: 'allOff' };
+  if (b.action !== 'light') return null;
+  const light = String(b.id ?? '');
+  if (!/^[0-9]{1,6}$/.test(light)) return null;
+  const on = !!b.on;
+  const cmd = { id: crypto.randomUUID(), action: 'light', light, on };
+  if (on && b.brightness != null && b.brightness !== '') {
+    const level = Math.round(Number(b.brightness));
+    if (!(level >= 0 && level <= 100)) return null;
+    cmd.brightness = level === 0 ? 1 : level;
+  }
+  return cmd;
+}
+
+function applyHueCommands(lights, cmds) {
+  for (const c of cmds || []) {
+    if (!c) continue;
+    if (c.action === 'allOff') {
+      for (const l of lights) l.on = false;
+    } else if (c.action === 'light') {
+      const l = lights.find((x) => String(x.id) === String(c.light));
+      if (!l) continue;
+      l.on = !!c.on;
+      if (c.on && c.brightness != null) l.brightness = c.brightness;
+    }
+  }
+}
+
+function huePublic(doc) {
+  return { configured: true, lights: doc.lights };
+}
+
+function huePublicCmd(c) {
+  const out = { id: c.id, action: c.action };
+  if (c.action === 'light') {
+    out.light = c.light;
+    out.on = !!c.on;
+    if (c.brightness != null) out.brightness = c.brightness;
+  }
+  return out;
+}
+
+async function hueLoad(env) {
+  if (!env.SHOPPING) return null;
+  const raw = await kvGet(env.SHOPPING, 'hue_bridge');
+  if (!raw) return { raw: null, doc: null };
+  try {
+    const doc = JSON.parse(raw);
+    if (!doc || !Array.isArray(doc.lights) || !Array.isArray(doc.cmds)) return { raw, doc: null };
+    return { raw, doc };
+  } catch {
+    return { raw, doc: null };
+  }
+}
+
+function hueWrote(r) {
+  const m = (r && r.meta) || {};
+  if (m.changes != null) return Number(m.changes) > 0;
+  if (m.rows_written != null) return Number(m.rows_written) > 0;
+  return false;
+}
+
+async function hueSave(env, prevRaw, doc) {
+  const next = JSON.stringify(doc);
+  const db = env.SHOPPING;
+  const r = prevRaw == null
+    ? await db.prepare('INSERT INTO kv (k, v) VALUES (?1, ?2) ON CONFLICT(k) DO NOTHING').bind('hue_bridge', next).run()
+    : await db.prepare('UPDATE kv SET v = ?1 WHERE k = ?2 AND v = ?3').bind(next, 'hue_bridge', prevRaw).run();
+  return hueWrote(r);
+}
+
+// Read-modify-write on one kv row. A stale bridge push cannot drop a tap that landed mid-sync:
+// the loser retries and applies the commands still in the row.
+async function hueMutate(env, fn) {
+  if (!env.SHOPPING) return null;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const cur = await hueLoad(env);
+    const next = fn(cur.doc);
+    if (next === cur.doc) return cur.doc;
+    if (await hueSave(env, cur.raw, next)) return next;
+  }
+  throw Object.assign(new Error('hue busy'), { busy: true });
+}
+
+// The bridge posts about every 30 seconds. Set this false, and window.HUE_SYNC in js/live.js,
+// to pause again: GET keeps the last rooms and POST does not queue a command.
+const HUE_SYNC = true;
+
+async function hue(request, env) {
+  try {
+    const cur = await hueLoad(env);
+    const stored = cur && cur.doc && cur.doc.configured;
+    if (!HUE_SYNC) {
+      if (request.method !== 'GET' && request.method !== 'POST') return new Response('Method not allowed', { status: 405 });
+      return hueJson(stored ? huePublic(cur.doc) : { configured: false });
+    }
+    if (request.method === 'GET') {
+      if (stored) return hueJson(huePublic(cur.doc));
+      if (!hueCloud(env)) return hueJson({ configured: false });
+      return hueJson(await hueState(env));
+    }
+    if (request.method !== 'POST') return new Response('Method not allowed', { status: 405 });
+    const b = await request.json().catch(() => ({}));
+    if (stored) {
+      const cmd = hueDashCommand(b);
+      if (!cmd) return hueJson({ error: 'bad command' }, 400);
+      const next = await hueMutate(env, (doc) => {
+        if (!doc || !doc.configured || !Array.isArray(doc.lights)) return doc;
+        const lights = doc.lights.map((l) => ({ ...l }));
+        applyHueCommands(lights, [cmd]);
+        const cmds = doc.cmds.concat(cmd).slice(-40);
+        return { configured: true, rev: (doc.rev || 0) + 1, lights, cmds };
+      });
+      if (!next || !next.configured) return hueJson({ configured: false });
+      return hueJson(huePublic(next));
+    }
+    if (!hueCloud(env)) return hueJson({ configured: false });
+    if (b.action === 'allOff') await hueAllOff(env);
+    else if (b.action === 'light') {
+      const call = hueCommand(b);
+      if (!call) return hueJson({ error: 'bad command' }, 400);
+      await hueOk(await hueApi(env, 'PUT', '/lights/' + call.id + '/state', call.state));
+    } else return hueJson({ error: 'bad command' }, 400);
+    return hueJson(await hueState(env));
+  } catch (err) {
+    console.error('hue', err.busy ? 'busy' : err.message);
+    return hueJson({ configured: true, error: err.login ? 'login' : 'Hue unavailable' }, err.busy ? 503 : 502);
+  }
+}
+
+async function hueBridge(request, env) {
+  if (request.method !== 'POST') return new Response('Method not allowed', { status: 405 });
+  if (!env.SHOPPING) return hueJson({ error: 'no database' }, 503);
+  const body = await request.text();
+  if (body.length > 100000) return hueJson({ error: 'too big' }, 413);
+  let d;
+  try { d = JSON.parse(body); } catch { return hueJson({ error: 'bad JSON' }, 400); }
+  const lights = sanitizeHueLights(d && d.state && d.state.lights);
+  if (!lights) return hueJson({ error: 'bad state' }, 400);
+  const ack = new Set((Array.isArray(d.ack) ? d.ack : []).filter((x) => typeof x === 'string' && /^[A-Za-z0-9-]{8,80}$/.test(x)).slice(0, 80));
+  try {
+    const next = await hueMutate(env, (doc) => {
+      const cmds = ((doc && doc.cmds) || []).filter((c) => c && !ack.has(c.id));
+      const merged = lights.map((l) => ({ ...l }));
+      applyHueCommands(merged, cmds);
+      return { configured: true, rev: ((doc && doc.rev) || 0) + 1, lights: merged, cmds };
+    });
+    return hueJson({ ok: true, commands: ((next && next.cmds) || []).map(huePublicCmd) });
+  } catch (err) {
+    console.error('hue bridge', err.busy ? 'busy' : 'failed');
+    return hueJson({ error: 'Hue unavailable' }, err.busy ? 503 : 502);
+  }
+}
+
+// ------------------------------------------------------------ Heatmiser neoHub (underfloor)
+// The frame and this Worker cannot reach a hub on the home LAN. scripts/neohub.mjs runs on
+// the PC, reads the hub, and posts zone state to /api/neohub/bridge. The dashboard keeps
+// posting to /api/neohub; those commands are queued in D1 and the script applies them.
+//   GET  /api/neohub                          -> { configured, zones: [{ id, name, current, target, heating, frost, offline, away }] }
+//   POST /api/neohub { action: 'target', id, target }  -> the same, after the change
+//   POST /api/neohub { action: 'frost', id, on }       -> the same, after frost mode changes
+//   POST /api/neohub/bridge { state, ack }    -> { commands } for the PC script only
+// Temperatures are °C. A target is 5–35 in half-degree steps.
+
+function neoLabel(v) {
+  return String(v || '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 40);
+}
+
+function neoNum(v, min, max) {
+  if (v == null || v === '') return null;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < min || n > max) return null;
+  return Math.round(n * 10) / 10;
+}
+
+function sanitizeNeoZones(list) {
+  if (!Array.isArray(list)) return null;
+  const out = [];
+  const seen = new Set();
+  for (const z of list) {
+    if (out.length >= 40) break;
+    if (!z || typeof z !== 'object') continue;
+    const id = String(z.id ?? '');
+    if (!/^[0-9]{1,8}$/.test(id) || seen.has(id)) continue;
+    const name = neoLabel(z.name);
+    if (!name) continue;
+    seen.add(id);
+    out.push({
+      id,
+      name,
+      current: neoNum(z.current, -10, 60),
+      target: neoNum(z.target, 0, 40),
+      heating: !!z.heating,
+      frost: !!z.frost,
+      offline: !!z.offline,
+      away: !!z.away,
+    });
+  }
+  return out;
+}
+
+function neoDashCommand(b, zones) {
+  if (!b || typeof b !== 'object') return null;
+  const zoneId = String(b.id ?? '');
+  if (!/^[0-9]{1,8}$/.test(zoneId)) return null;
+  const zone = (zones || []).find((z) => z.id === zoneId);
+  if (!zone) return null;
+  if (b.action === 'target') {
+    const target = Math.round(Number(b.target) * 2) / 2;
+    if (!(target >= 5 && target <= 35)) return null;
+    return { id: crypto.randomUUID(), action: 'target', zone: zoneId, name: zone.name, target };
+  }
+  if (b.action === 'frost') return { id: crypto.randomUUID(), action: 'frost', zone: zoneId, name: zone.name, on: !!b.on };
+  return null;
+}
+
+function applyNeoCommands(zones, cmds) {
+  for (const c of cmds || []) {
+    if (!c) continue;
+    const z = zones.find((x) => x.id === String(c.zone));
+    if (!z) continue;
+    if (c.action === 'target' && c.target != null) {
+      z.target = c.target;
+      z.frost = false;
+    } else if (c.action === 'frost') z.frost = !!c.on;
+  }
+}
+
+function neoPublic(doc) {
+  return { configured: true, zones: doc.zones };
+}
+
+function neoPublicCmd(c) {
+  const out = { id: c.id, action: c.action, zone: c.zone, name: c.name };
+  if (c.action === 'target') out.target = c.target;
+  if (c.action === 'frost') out.on = !!c.on;
+  return out;
+}
+
+function neoJson(v, status) {
+  return Response.json(v, { status: status || 200, headers: { 'Cache-Control': 'private, no-store' } });
+}
+
+async function neoLoad(env) {
+  if (!env.SHOPPING) return null;
+  const raw = await kvGet(env.SHOPPING, 'neohub_bridge');
+  if (!raw) return { raw: null, doc: null };
+  try {
+    const doc = JSON.parse(raw);
+    if (!doc || !Array.isArray(doc.zones) || !Array.isArray(doc.cmds)) return { raw, doc: null };
+    return { raw, doc };
+  } catch {
+    return { raw, doc: null };
+  }
+}
+
+async function neoSave(env, prevRaw, doc) {
+  const next = JSON.stringify(doc);
+  const db = env.SHOPPING;
+  const r = prevRaw == null
+    ? await db.prepare('INSERT INTO kv (k, v) VALUES (?1, ?2) ON CONFLICT(k) DO NOTHING').bind('neohub_bridge', next).run()
+    : await db.prepare('UPDATE kv SET v = ?1 WHERE k = ?2 AND v = ?3').bind(next, 'neohub_bridge', prevRaw).run();
+  return hueWrote(r);
+}
+
+async function neoMutate(env, fn) {
+  if (!env.SHOPPING) return null;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const cur = await neoLoad(env);
+    const next = fn(cur.doc);
+    if (next === cur.doc) return cur.doc;
+    if (await neoSave(env, cur.raw, next)) return next;
+  }
+  throw Object.assign(new Error('neohub busy'), { busy: true });
+}
+
+async function neohub(request, env) {
+  try {
+    const cur = await neoLoad(env);
+    const stored = cur && cur.doc && cur.doc.configured;
+    if (request.method === 'GET') return neoJson(stored ? neoPublic(cur.doc) : { configured: false });
+    if (request.method !== 'POST') return new Response('Method not allowed', { status: 405 });
+    if (!stored) return neoJson({ configured: false });
+    const b = await request.json().catch(() => ({}));
+    const cmd = neoDashCommand(b, cur.doc.zones);
+    if (!cmd) return neoJson({ error: 'bad command' }, 400);
+    const next = await neoMutate(env, (doc) => {
+      if (!doc || !doc.configured || !Array.isArray(doc.zones)) return doc;
+      const zones = doc.zones.map((z) => ({ ...z }));
+      applyNeoCommands(zones, [cmd]);
+      return { configured: true, rev: (doc.rev || 0) + 1, zones, cmds: doc.cmds.concat(cmd).slice(-40) };
+    });
+    if (!next || !next.configured) return neoJson({ configured: false });
+    return neoJson(neoPublic(next));
+  } catch (err) {
+    console.error('neohub', err.busy ? 'busy' : 'failed');
+    return neoJson({ configured: true, error: 'Underfloor unavailable' }, err.busy ? 503 : 502);
+  }
+}
+
+async function neohubBridge(request, env) {
+  if (request.method !== 'POST') return new Response('Method not allowed', { status: 405 });
+  if (!env.SHOPPING) return neoJson({ error: 'no database' }, 503);
+  const body = await request.text();
+  if (body.length > 100000) return neoJson({ error: 'too big' }, 413);
+  let d;
+  try { d = JSON.parse(body); } catch { return neoJson({ error: 'bad JSON' }, 400); }
+  const zones = sanitizeNeoZones(d && d.state && d.state.zones);
+  if (!zones) return neoJson({ error: 'bad state' }, 400);
+  const ack = new Set((Array.isArray(d.ack) ? d.ack : []).filter((x) => typeof x === 'string' && /^[A-Za-z0-9-]{8,80}$/.test(x)).slice(0, 80));
+  try {
+    const next = await neoMutate(env, (doc) => {
+      const cmds = ((doc && doc.cmds) || []).filter((c) => c && !ack.has(c.id));
+      const merged = zones.map((z) => ({ ...z }));
+      applyNeoCommands(merged, cmds);
+      return { configured: true, rev: ((doc && doc.rev) || 0) + 1, zones: merged, cmds };
+    });
+    return neoJson({ ok: true, commands: ((next && next.cmds) || []).map(neoPublicCmd) });
+  } catch (err) {
+    console.error('neohub bridge', err.busy ? 'busy' : 'failed');
+    return neoJson({ error: 'Underfloor unavailable' }, err.busy ? 503 : 502);
+  }
+}
+
+// ------------------------------------------------------------ Ring doorbell
+// The frame cannot call Ring (old trust store, no WebRTC). scripts/ring-bridge.mjs on the PC
+// holds the refresh token and posts camera state here. Pictures are JPEGs in D1, served from
+// this origin. Read only: no live video, no audio, no siren.
+//   GET  /api/ring                 -> { configured, devices, updated }
+//   POST /api/ring/bridge { state }-> { ok }
+//   GET  /api/ring/snapshot?id=    -> image/jpeg
+//   POST /api/ring/snapshot?id=    -> raw JPEG body
+
+function ringLabel(v) {
+  return String(v || '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, 40);
+}
+
+function ringMillis(v) {
+  const n = Number(v);
+  if (!(n > 1e12 && n < 1e14)) return null;
+  return n;
+}
+
+function ringBattery(v) {
+  const n = Number(v);
+  if (!(n >= 0 && n <= 100)) return null;
+  return Math.round(n);
+}
+
+function ringEvent(e) {
+  if (!e || typeof e !== 'object') return null;
+  const id = String(e.id || '');
+  if (!/^[0-9]{4,24}$/.test(id)) return null;
+  const kind = e.kind === 'ding' || e.kind === 'motion' || e.kind === 'knock' ? e.kind : null;
+  if (!kind) return null;
+  const at = ringMillis(e.at);
+  if (at == null) return null;
+  return { id, at, kind, person: !!e.person, missed: !!e.missed, answered: !!e.answered };
+}
+
+function sanitizeRingDevices(list) {
+  if (!Array.isArray(list)) return null;
+  const out = [];
+  const seen = new Set();
+  for (const d of list) {
+    if (out.length >= 4) break;
+    if (!d || typeof d !== 'object') continue;
+    const id = String(d.id ?? '');
+    if (!/^[0-9]{1,20}$/.test(id) || seen.has(id)) continue;
+    const name = ringLabel(d.name);
+    if (!name) continue;
+    seen.add(id);
+    const events = [];
+    const seenEv = new Set();
+    for (const raw of (Array.isArray(d.events) ? d.events : [])) {
+      const ev = ringEvent(raw);
+      if (!ev || seenEv.has(ev.id)) continue;
+      seenEv.add(ev.id);
+      events.push(ev);
+    }
+    events.sort((a, b) => b.at - a.at);
+    out.push({
+      id,
+      name,
+      battery: ringBattery(d.battery),
+      charging: !!d.charging,
+      offline: !!d.offline,
+      snap: ringMillis(d.snap),
+      events: events.slice(0, 12),
+    });
+  }
+  return out;
+}
+
+// Accepts an ArrayBuffer, a typed array, a base64 string, or a plain array of bytes.
+// D1 gives a BLOB back as an array of numbers. Rejects anything that is not a JPEG
+// between 100 bytes and 800 KB (D1's row limit is about 1 MB).
+function ringJpegBytes(v) {
+  if (!v) return null;
+  let bytes = null;
+  if (v instanceof ArrayBuffer) bytes = new Uint8Array(v);
+  else if (ArrayBuffer.isView(v)) bytes = new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
+  else if (Array.isArray(v)) {
+    if (v.length < 100 || v.length > 800000) return null;
+    bytes = Uint8Array.from(v);
+  } else if (typeof v === 'string') {
+    try {
+      const bin = atob(v.replace(/\s/g, ''));
+      bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    } catch {
+      return null;
+    }
+  }
+  if (!bytes || bytes.byteLength < 100 || bytes.byteLength > 800000) return null;
+  if (bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff) return null;
+  return bytes;
+}
+
+function ringJson(v, status) {
+  return Response.json(v, { status: status || 200, headers: { 'Cache-Control': 'private, no-store' } });
+}
+
+async function ringLoad(env) {
+  if (!env.SHOPPING) return null;
+  const raw = await kvGet(env.SHOPPING, 'ring_bridge');
+  if (!raw) return null;
+  try {
+    const doc = JSON.parse(raw);
+    const devices = sanitizeRingDevices(doc && doc.devices);
+    if (!doc || !doc.configured || !devices) return null;
+    return { configured: true, devices, updated: ringMillis(doc.updated) };
+  } catch {
+    return null;
+  }
+}
+
+async function ring(request, env) {
+  if (request.method !== 'GET') return new Response('Method not allowed', { status: 405 });
+  try {
+    const doc = await ringLoad(env);
+    return ringJson(doc || { configured: false });
+  } catch (err) {
+    console.error('ring', err && err.busy ? 'busy' : 'failed');
+    return ringJson({ configured: false });
+  }
+}
+
+async function ringBridge(request, env) {
+  if (request.method !== 'POST') return new Response('Method not allowed', { status: 405 });
+  if (!env.SHOPPING) return ringJson({ error: 'no database' }, 503);
+  const body = await request.text();
+  if (body.length > 100000) return ringJson({ error: 'too big' }, 413);
+  let d;
+  try { d = JSON.parse(body); } catch { return ringJson({ error: 'bad JSON' }, 400); }
+  const devices = sanitizeRingDevices(d && d.state && d.state.devices);
+  if (!devices) return ringJson({ error: 'bad state' }, 400);
+  try {
+    await kvPut(env.SHOPPING, 'ring_bridge', JSON.stringify({
+      configured: true,
+      rev: Date.now(),
+      devices,
+      updated: ringMillis(d.state && d.state.updated) || Date.now(),
+    }));
+    return ringJson({ ok: true });
+  } catch {
+    console.error('ring bridge failed');
+    return ringJson({ error: 'Ring unavailable' }, 502);
+  }
+}
+
+async function ringSnapTable(db) {
+  await db.prepare('CREATE TABLE IF NOT EXISTS ring_snap (id TEXT PRIMARY KEY, jpeg BLOB NOT NULL, at INTEGER NOT NULL)').run();
+}
+
+async function ringSnapshot(request, env, url) {
+  const id = url.searchParams.get('id') || '';
+  if (!/^[0-9]{1,20}$/.test(id)) return new Response('Not found', { status: 404 });
+  if (!env.SHOPPING) return request.method === 'GET' ? new Response('Not found', { status: 404 }) : ringJson({ error: 'no database' }, 503);
+  const known = await ringLoad(env);
+  if (!known || !known.devices.some((d) => d.id === id)) return new Response('Not found', { status: 404 });
+  try {
+    await ringSnapTable(env.SHOPPING);
+    if (request.method === 'GET') {
+      const row = await env.SHOPPING.prepare('SELECT jpeg FROM ring_snap WHERE id = ?1').bind(id).first();
+      const bytes = ringJpegBytes(row && row.jpeg);
+      if (!bytes) return new Response('Not found', { status: 404 });
+      return new Response(bytes, { headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, no-store' } });
+    }
+    if (request.method !== 'POST') return new Response('Method not allowed', { status: 405 });
+    const type = request.headers.get('Content-Type') || '';
+    if (!type.startsWith('image/jpeg')) return ringJson({ error: 'bad image' }, 400);
+    const bytes = ringJpegBytes(await request.arrayBuffer());
+    if (!bytes) return ringJson({ error: 'bad image' }, 400);
+    const blob = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+    await env.SHOPPING.prepare(
+      'INSERT INTO ring_snap (id, jpeg, at) VALUES (?1, ?2, ?3) ON CONFLICT(id) DO UPDATE SET jpeg = excluded.jpeg, at = excluded.at',
+    ).bind(id, blob, Date.now()).run();
+    return ringJson({ ok: true });
+  } catch {
+    console.error('ring snapshot failed');
+    return new Response('Not found', { status: 404 });
+  }
+}
+
+// ------------------------------------------------------------ Phone sign-in
+// A QR code for the iPhone camera. The code is a phone link stored in D1, not the household
+// key. It is not written into the page as text, and it is not cached.
+const PHONE_LINK = 'phone_link';
+let phoneLinkCache = '';
+
+function phoneQrSvg(link) {
+  return renderSVG(link, { ecc: 'H', border: 4, pixelSize: 8, whiteColor: '#ffffff', blackColor: '#111111' });
+}
+
+function newPhoneLink() {
+  const bytes = new Uint8Array(24);
+  crypto.getRandomValues(bytes);
+  let out = '';
+  for (const b of bytes) out += b.toString(16).padStart(2, '0');
+  return out;
+}
+
+function validPhoneLink(value) {
+  return typeof value === 'string' && /^[0-9a-f]{48}$/.test(value);
+}
+
+async function storedPhoneLink(env) {
+  if (phoneLinkCache) return phoneLinkCache;
+  if (!env.SHOPPING) return null;
+  const token = await kvGet(env.SHOPPING, PHONE_LINK);
+  if (!validPhoneLink(token)) return null;
+  phoneLinkCache = token;
+  return token;
+}
+
+async function phoneLink(env) {
+  const existing = await storedPhoneLink(env);
+  if (existing) return existing;
+  if (!env.SHOPPING) return null;
+  const token = newPhoneLink();
+  await env.SHOPPING.prepare(
+    'INSERT INTO kv (k, v) VALUES (?1, ?2) ON CONFLICT(k) DO NOTHING'
+  ).bind(PHONE_LINK, token).run();
+  phoneLinkCache = '';
+  return storedPhoneLink(env);
+}
+
+async function phone(request, env) {
+  if (request.method !== 'GET') return new Response('Method not allowed', { status: 405 });
+  let svg;
+  try {
+    const token = await phoneLink(env);
+    if (!token) return new Response('Not found', { status: 404 });
+    svg = phoneQrSvg(new URL(request.url).origin + '/?phone=' + token);
+  } catch {
+    return new Response('Not found', { status: 404 });
+  }
+  return new Response(svg, {
+    headers: {
+      'Content-Type': 'image/svg+xml; charset=utf-8',
+      'Cache-Control': 'private, no-store',
+      'X-Robots-Tag': 'noindex',
+    },
+  });
 }
 
 // ------------------------------------------------------------ Spotify
@@ -705,27 +1512,109 @@ function cookieValue(request) {
   return null;
 }
 
+function cookieHeader(dashKey) {
+  return `${COOKIE}=${dashKey}; Max-Age=${MAX_AGE}; Path=/; Secure; HttpOnly; SameSite=Lax`;
+}
+
+function isIos(request) {
+  return /iPhone|iPad|iPod/.test(request.headers.get('User-Agent') || '');
+}
+
+// Runs before the app script. Same-origin fetches and pictures keep the phone link, so the
+// bookmark works even when Safari will not keep the cookie. The link is hex, so it needs no
+// further escaping inside this script.
+function phoneBoot(token) {
+  return '<script>(function(){var t=' + JSON.stringify(token) + ';' +
+    'function add(u){if(typeof u!=="string"||u.indexOf("data:")===0||u.indexOf("blob:")===0)return u;' +
+    'try{var x=new URL(u,location.origin);if(x.origin!==location.origin||(x.protocol!=="https:"&&x.protocol!=="http:"))return u;' +
+    'if(!x.searchParams.get("phone"))x.searchParams.set("phone",t);var next=x.pathname+x.search+x.hash;' +
+    'return /^https?:/i.test(u)?x.origin+next:next;}catch(e){return u;}}' +
+    'var f=window.fetch;window.fetch=function(i,n){if(typeof i==="string")return f.call(this,add(i),n);' +
+    'if(typeof Request!=="undefined"&&i instanceof Request)return f.call(this,new Request(add(i.url),i));' +
+    'return f.call(this,i,n);};' +
+    'try{var d=Object.getOwnPropertyDescriptor(HTMLImageElement.prototype,"src");' +
+    'if(d&&d.set&&d.get)Object.defineProperty(HTMLImageElement.prototype,"src",{configurable:true,' +
+    'set:function(v){d.set.call(this,add(String(v)));},get:function(){return d.get.call(this);}});}catch(e){}})();</script>';
+}
+
+function withPhoneLinks(html, token) {
+  html = html.replace('<head>', '<head>' + phoneBoot(token));
+  return html.replace(/\s(href|src)="([^"]+)"/g, (full, attr, u) => {
+    if (/^(https?:)?\/\//i.test(u) || u.startsWith('data:') || u.startsWith('blob:') || u.startsWith('#')) return full;
+    const cut = u.split('#');
+    const parts = cut[0].split('?');
+    const params = new URLSearchParams(parts[1] || '');
+    if (!params.get('phone')) params.set('phone', token);
+    return ' ' + attr + '="' + parts[0] + '?' + params.toString() + (cut[1] ? '#' + cut[1] : '') + '"';
+  });
+}
+
+function phoneManifest(token) {
+  const q = '?phone=' + token;
+  return Response.json({
+    name: 'Home HQ',
+    short_name: 'Home HQ',
+    start_url: '/' + q,
+    scope: '/',
+    display: 'fullscreen',
+    orientation: 'landscape',
+    background_color: '#F2EEE6',
+    theme_color: '#F2EEE6',
+    icons: [
+      { src: '/icon-192.png' + q, sizes: '192x192', type: 'image/png', purpose: 'any' },
+      { src: '/icon-512.png' + q, sizes: '512x512', type: 'image/png', purpose: 'any' },
+    ],
+  }, {
+    headers: {
+      'Content-Type': 'application/manifest+json; charset=utf-8',
+      'Cache-Control': 'private, no-store',
+      'X-Robots-Tag': 'noindex',
+    },
+  });
+}
+
+function signed(response, dashKey, opts) {
+  const headers = new Headers(response.headers);
+  headers.append('Set-Cookie', cookieHeader(dashKey));
+  headers.set('Cache-Control', opts.immutable ? 'private, max-age=31536000, immutable' : 'private, no-store');
+  headers.set('Referrer-Policy', 'no-referrer');
+  headers.set('X-Robots-Tag', 'noindex');
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
+export { sanitizeHueLights, applyHueCommands, hueDashCommand, sanitizeNeoZones, applyNeoCommands, neoDashCommand, sanitizeRingDevices, ringJpegBytes, phoneQrSvg };
+
 export default {
   async fetch(request, env) {
     if (!env.DASH_KEY) return new Response('DASH_KEY not configured', { status: 500 });
 
     const url = new URL(request.url);
     const key = url.searchParams.get('key');
+    const phoneParam = url.searchParams.get('phone');
+    let viaPhone = false;
 
-    if (key !== null) {
+    if (phoneParam !== null) {
+      if (!validPhoneLink(phoneParam)) return new Response('Not found', { status: 404 });
+      const stored = await storedPhoneLink(env);
+      if (!(await same(phoneParam, stored))) return new Response('Not found', { status: 404 });
+      viaPhone = true;
+    } else if (key !== null) {
       if (!(await same(key, env.DASH_KEY))) return new Response('Not found', { status: 404 });
-      url.searchParams.delete('key');
-      return new Response(null, {
-        status: 302,
-        headers: {
-          Location: url.pathname + url.search,
-          'Set-Cookie': `${COOKIE}=${env.DASH_KEY}; Max-Age=${MAX_AGE}; Path=/; Secure; HttpOnly; SameSite=Lax`,
-          'Cache-Control': 'no-store',
-        },
-      });
-    }
-
-    if (!(await same(cookieValue(request), env.DASH_KEY))) {
+      // The frame's WebView keeps a cookie set on this redirect. Safari, opened from the
+      // iPhone camera, does not, so an iPhone is given the page it actually asked for.
+      if (!isIos(request)) {
+        url.searchParams.delete('key');
+        return new Response(null, {
+          status: 302,
+          headers: {
+            Location: url.pathname + url.search,
+            'Set-Cookie': cookieHeader(env.DASH_KEY),
+            'Cache-Control': 'no-store',
+            'Referrer-Policy': 'no-referrer',
+          },
+        });
+      }
+    } else if (!(await same(cookieValue(request), env.DASH_KEY))) {
       return new Response('Not found', { status: 404 });
     }
 
@@ -744,13 +1633,34 @@ export default {
     if (url.pathname === '/api/chores' || url.pathname === '/api/chores/done') return chores(request, env, url);
     if (url.pathname === '/api/agents') return agents(request, env);
     if (url.pathname === '/api/hive') return hive(request, env);
+    if (url.pathname === '/api/hue/bridge') return hueBridge(request, env);
+    if (url.pathname === '/api/hue') return hue(request, env);
+    if (url.pathname === '/api/neohub/bridge') return neohubBridge(request, env);
+    if (url.pathname === '/api/neohub') return neohub(request, env);
+    if (url.pathname === '/api/ring/snapshot') return ringSnapshot(request, env, url);
+    if (url.pathname === '/api/ring/bridge') return ringBridge(request, env);
+    if (url.pathname === '/api/ring') return ring(request, env);
+    if (url.pathname === '/api/phone') return phone(request, env);
+    if (viaPhone && url.pathname === '/manifest.webmanifest') return signed(phoneManifest(phoneParam), env.DASH_KEY, {});
     if (url.pathname === '/api/spotify' || url.pathname.startsWith('/api/spotify/')) return spotify(request, env, url);
 
-    const res = await env.ASSETS.fetch(request);
-    const out = new Response(res.body, res);
+    // The sign-in link is a query on the page address. Asset names are the path alone.
+    const assetUrl = new URL(request.url);
+    assetUrl.search = '';
+    const res = await env.ASSETS.fetch(new Request(assetUrl, request));
+    const type = res.headers.get('content-type') || '';
+    // Read the HTML before wrapping it. The asset body can only be used once.
+    const page = viaPhone && res.ok && type.includes('text/html')
+      ? new Response(withPhoneLinks(await res.text(), phoneParam), {
+        status: res.status,
+        headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      })
+      : res;
     // Hashed files (Vite's /assets/*, scripts/build-photos.mjs's /photos/<hash>.jpg) never change
     // under the same name, so the tablet may keep them; this saves most requests from the slideshow.
     const immutable = /^\/(assets\/|photos\/[0-9a-f]+\.jpg$)/.test(url.pathname);
+    if (viaPhone || (key !== null && isIos(request))) return signed(page, env.DASH_KEY, { immutable: immutable && res.ok });
+    const out = new Response(page.body, page);
     out.headers.set('Cache-Control', immutable && res.ok ? 'private, max-age=31536000, immutable' : 'private, no-store');
     out.headers.set('X-Robots-Tag', 'noindex');
     return out;

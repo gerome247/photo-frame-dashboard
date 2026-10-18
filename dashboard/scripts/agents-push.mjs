@@ -5,9 +5,10 @@
 //
 // Claude: the usage limits Claude Code's /usage shows (5-hour session and weekly), read with the
 // Claude Code login in ~/.claude/.credentials.json, plus tokens per day from Claude Code's logs.
-// The login is only read here: it never leaves this PC and is never refreshed (Claude Code does
-// that), so if it has expired the limits are skipped until Claude Code is next used.
-// Grok: xAI doesn't publish subscription usage, so only the plan name (local.config.json) is sent.
+// Grok Build: the weekly credit limit Grok's /usage shows, read with the login in ~/.grok/auth.json
+// (the same billing call the CLI makes), plus tokens per day from each session's usage.json.
+// Logins are only read here: they never leave this PC and are never refreshed (the CLIs do that),
+// so if one has expired its limits are skipped until that CLI is next used.
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -72,10 +73,72 @@ async function claude() {
   };
 }
 
+// Tokens per local day for the last 7 days, from Grok Build session usage.
+// Counts uncached input + output + cache writes. Cache reads sit inside inputTokens and are
+// left out, same as Claude, because they would dwarf the real work.
+function grokTokens() {
+  const days = [...Array(7)].map((_, i) => { const d = new Date(); d.setDate(d.getDate() - 6 + i); return day(d); });
+  const totals = Object.fromEntries(days.map((d) => [d, 0]));
+  const since = Date.now() - 8 * 864e5;
+  const root = join(homedir(), '.grok', 'sessions');
+  const walk = (dir) => {
+    for (const name of existsSync(dir) ? readdirSync(dir) : []) {
+      const p = join(dir, name), st = statSync(p);
+      if (st.isDirectory()) walk(p);
+      else if (name === 'usage.json' && st.mtimeMs > since) {
+        let d;
+        try { d = JSON.parse(readFileSync(p, 'utf8')); } catch { continue; }
+        for (const t of d.turns || []) {
+          if (!t.endedAt) continue;
+          const key = day(new Date(t.endedAt));
+          if (!(key in totals)) continue;
+          const fresh = Math.max(0, (t.inputTokens || 0) - (t.cachedReadTokens || 0));
+          totals[key] += fresh + (t.outputTokens || 0) + (t.cacheCreationTokens || 0);
+        }
+      }
+    }
+  };
+  walk(root);
+  return days.map((d) => totals[d]);
+}
+
+async function grok() {
+  const out = { id: 'grok', plan: (plans.grok && plans.grok.plan) || 'Subscription', tokensWeek: grokTokens() };
+  const credFile = join(homedir(), '.grok', 'auth.json');
+  if (!existsSync(credFile)) return { ...out, note: 'No Grok Build login on the PC' };
+  const entry = Object.values(JSON.parse(readFileSync(credFile, 'utf8'))).find((e) => e && e.key);
+  if (!entry) return { ...out, note: 'No Grok Build login on the PC' };
+  if (!entry.expires_at || Date.parse(entry.expires_at) < Date.now()) {
+    return { ...out, note: 'Limits update next time Grok Build is used on the PC' };
+  }
+  let version = '0.0.0';
+  try { version = JSON.parse(readFileSync(join(homedir(), '.grok', 'version.json'), 'utf8')).version || version; } catch { /* header is advisory */ }
+  const res = await fetch('https://cli-chat-proxy.grok.com/v1/billing?format=credits', {
+    headers: {
+      Authorization: 'Bearer ' + entry.key,
+      'x-grok-client-version': version,
+      'x-grok-client-surface': 'grok-build',
+      'User-Agent': 'home-dashboard',
+    },
+  });
+  if (!res.ok) return { ...out, note: 'Grok usage unavailable (' + res.status + ')' };
+  const cfgB = (await res.json()).config || {};
+  const period = cfgB.currentPeriod || {};
+  if (cfgB.creditUsagePercent == null || !period.end) return { ...out, note: 'Grok usage unavailable' };
+  const names = { GrokBuild: 'Grok Build', GrokChat: 'Grok chat' };
+  return {
+    ...out,
+    weekly: { used: Math.round(cfgB.creditUsagePercent), resets: period.end, label: 'Weekly · credits' },
+    breakdown: (cfgB.productUsage || [])
+      .filter((r) => r.usagePercent > 0)
+      .map((r) => ({ name: names[r.product] || r.product, percent: Math.round(r.usagePercent) })),
+  };
+}
+
 const payload = {
   agents: [
     await claude().catch((err) => ({ id: 'claude', note: 'Claude usage unavailable', error: String(err.message).slice(0, 80) })),
-    { id: 'grok', plan: (plans.grok && plans.grok.plan) || 'Subscription' },
+    await grok().catch((err) => ({ id: 'grok', plan: (plans.grok && plans.grok.plan) || 'Subscription', note: 'Grok usage unavailable', error: String(err.message).slice(0, 80) })),
   ],
 };
 const res = await fetch(cfg.url.replace(/\/$/, '') + '/api/agents', {
@@ -83,6 +146,10 @@ const res = await fetch(cfg.url.replace(/\/$/, '') + '/api/agents', {
   headers: { 'Content-Type': 'application/json', Cookie: 'dash_key=' + key },
   body: JSON.stringify(payload),
 });
-const c = payload.agents[0];
-console.log(new Date().toISOString(), 'agents push', res.status, '| Claude', c.session ? 'session ' + c.session.used + '%, weekly ' + (c.weekly || {}).used + '%' : c.note, '| tokens today', c.tokensWeek ? c.tokensWeek[6] : '?');
+const c = payload.agents[0], g = payload.agents[1];
+console.log(new Date().toISOString(), 'agents push', res.status,
+  '| Claude', c.session ? 'session ' + c.session.used + '%, weekly ' + (c.weekly || {}).used + '%' : c.note,
+  '| tokens today', c.tokensWeek ? c.tokensWeek[6] : '?',
+  '| Grok', g.weekly ? 'weekly ' + g.weekly.used + '%' : g.note,
+  '| tokens today', g.tokensWeek ? g.tokensWeek[6] : '?');
 if (!res.ok) process.exitCode = 1;
