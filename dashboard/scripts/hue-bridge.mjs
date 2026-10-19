@@ -10,6 +10,7 @@
 import { chmodSync, existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { accessHeaders } from './access-token.mjs';
 
 const DASH = join(dirname(fileURLToPath(import.meta.url)), '..');
 const KEY_FILE = join(DASH, '.hue-key');
@@ -210,7 +211,7 @@ async function applyCommand(ip, user, cmd) {
 async function push(dash, state, ack) {
   const res = await fetch(dash.url + '/api/hue/bridge', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Cookie: 'dash_key=' + dash.key },
+    headers: { 'Content-Type': 'application/json', Cookie: 'dash_key=' + dash.key, ...accessHeaders() },
     body: JSON.stringify({ state, ack }),
     signal: AbortSignal.timeout(15000),
   });

@@ -22,6 +22,7 @@ scripts/si006-webview-overlay/build/
 /frames
 
 /dashboard/.dash-key
+/dashboard/.access-token
 /dashboard/.hue-key
 /dashboard/.neohub-token
 /dashboard/.ring-token

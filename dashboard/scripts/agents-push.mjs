@@ -13,6 +13,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { accessHeaders } from './access-token.mjs';
 
 const DASH = join(dirname(fileURLToPath(import.meta.url)), '..');
 const cfg = JSON.parse(readFileSync(join(DASH, 'local.config.json'), 'utf8'));
@@ -143,7 +144,7 @@ const payload = {
 };
 const res = await fetch(cfg.url.replace(/\/$/, '') + '/api/agents', {
   method: 'POST',
-  headers: { 'Content-Type': 'application/json', Cookie: 'dash_key=' + key },
+  headers: { 'Content-Type': 'application/json', Cookie: 'dash_key=' + key, ...accessHeaders() },
   body: JSON.stringify(payload),
 });
 const c = payload.agents[0], g = payload.agents[1];

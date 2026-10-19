@@ -370,8 +370,6 @@ button.card:active, .h-hero:active, .h-photo:active { transform: scale(.985); }
   [data-layout="fluid"] .rail-clock { display: none; }
   [data-layout="fluid"] .rail-more { display: flex; }
   [data-layout="fluid"] .rail-more.is-current { background: var(--ink); color: var(--paper); }
-  /* the Phone tab shows a QR code for signing in a phone: no use on the phone itself */
-  [data-layout="fluid"] .more-tab[data-tab="phone"] { display: none; }
 
   /* controls */
   [data-layout="fluid"] .btn { padding: 0 18px; font-size: 15px; }

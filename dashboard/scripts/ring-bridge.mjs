@@ -9,6 +9,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { accessHeaders } from './access-token.mjs';
 
 const DASH = join(dirname(fileURLToPath(import.meta.url)), '..');
 const TOKEN_FILE = join(DASH, '.ring-token');
@@ -303,7 +304,7 @@ async function fetchSnap(auth, access, id, force) {
 async function pushState(dash, devices) {
   const res = await fetch(dash.url + '/api/ring/bridge', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Cookie: 'dash_key=' + dash.key },
+    headers: { 'Content-Type': 'application/json', Cookie: 'dash_key=' + dash.key, ...accessHeaders() },
     body: JSON.stringify({ state: { devices, updated: Date.now() } }),
     signal: AbortSignal.timeout(15000),
   });
@@ -314,7 +315,7 @@ async function pushState(dash, devices) {
 async function pushSnap(dash, id, jpeg) {
   const res = await fetch(dash.url + '/api/ring/snapshot?id=' + encodeURIComponent(id), {
     method: 'POST',
-    headers: { 'Content-Type': 'image/jpeg', Cookie: 'dash_key=' + dash.key },
+    headers: { 'Content-Type': 'image/jpeg', Cookie: 'dash_key=' + dash.key, ...accessHeaders() },
     body: jpeg,
     signal: AbortSignal.timeout(20000),
   });

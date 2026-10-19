@@ -64,7 +64,6 @@ await import('./views/control.js');
 await import('./views/ring.js');
 await import('./views/agents.js');
 await import('./views/spotify.js');
-await import('./views/phone.js');
 await import('./views/ambient.js');
 await import('./diag.js');
 window.App.start();

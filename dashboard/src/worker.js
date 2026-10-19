@@ -1,13 +1,12 @@
-import { renderSVG } from 'uqr';
-
 // Gatekeeper for the dashboard: nothing (not even index.html) is served without the key.
 // - The frame visits /?key=<DASH_KEY> once: a redirect sets a long-lived cookie and opens
-//   the clean URL. Safari on the iPhone drops a cookie set that way, so the Phone tab does
-//   not use it.
-// - The Phone tab's code is a separate /?phone= link stored in D1. That address opens the
-//   dashboard itself, and the files on that page carry the same link, so bookmarking it
-//   signs the phone in again. Wrong or missing key → 404, so the site looks empty.
+//   the clean URL. Safari on the iPhone drops a cookie set that way, so an iPhone gets the
+//   page it asked for, with the cookie on every file. Wrong or missing key → 404, so the
+//   site looks empty.
 // Set the key with: npx wrangler secret put DASH_KEY
+// - Once Cloudflare Access is in front (ACCESS_TEAM_DOMAIN and ACCESS_AUD set by deploy.mjs),
+//   Access signs people and devices in instead. Every request must then carry Access's signed
+//   token (Cf-Access-Jwt-Assertion), and the key is ignored.
 
 const COOKIE = 'dash_key';
 const MAX_AGE = 400 * 24 * 60 * 60; // browsers cap cookie lifetime at 400 days
@@ -1196,68 +1195,6 @@ async function ringSnapshot(request, env, url) {
   }
 }
 
-// ------------------------------------------------------------ Phone sign-in
-// A QR code for a phone camera. The code is a phone link stored in D1, not the household
-// key. It is not written into the page as text, and it is not cached.
-const PHONE_LINK = 'phone_link';
-let phoneLinkCache = '';
-
-function phoneQrSvg(link) {
-  return renderSVG(link, { ecc: 'H', border: 4, pixelSize: 8, whiteColor: '#ffffff', blackColor: '#111111' });
-}
-
-function newPhoneLink() {
-  const bytes = new Uint8Array(24);
-  crypto.getRandomValues(bytes);
-  let out = '';
-  for (const b of bytes) out += b.toString(16).padStart(2, '0');
-  return out;
-}
-
-function validPhoneLink(value) {
-  return typeof value === 'string' && /^[0-9a-f]{48}$/.test(value);
-}
-
-async function storedPhoneLink(env) {
-  if (phoneLinkCache) return phoneLinkCache;
-  if (!env.SHOPPING) return null;
-  const token = await kvGet(env.SHOPPING, PHONE_LINK);
-  if (!validPhoneLink(token)) return null;
-  phoneLinkCache = token;
-  return token;
-}
-
-async function phoneLink(env) {
-  const existing = await storedPhoneLink(env);
-  if (existing) return existing;
-  if (!env.SHOPPING) return null;
-  const token = newPhoneLink();
-  await env.SHOPPING.prepare(
-    'INSERT INTO kv (k, v) VALUES (?1, ?2) ON CONFLICT(k) DO NOTHING'
-  ).bind(PHONE_LINK, token).run();
-  phoneLinkCache = '';
-  return storedPhoneLink(env);
-}
-
-async function phone(request, env) {
-  if (request.method !== 'GET') return new Response('Method not allowed', { status: 405 });
-  let svg;
-  try {
-    const token = await phoneLink(env);
-    if (!token) return new Response('Not found', { status: 404 });
-    svg = phoneQrSvg(new URL(request.url).origin + '/?phone=' + token);
-  } catch {
-    return new Response('Not found', { status: 404 });
-  }
-  return new Response(svg, {
-    headers: {
-      'Content-Type': 'image/svg+xml; charset=utf-8',
-      'Cache-Control': 'private, no-store',
-      'X-Robots-Tag': 'noindex',
-    },
-  });
-}
-
 // ------------------------------------------------------------ Spotify
 // Remote control for one Spotify (Premium) account via the Web API: now playing, controls,
 // library, search, queue and devices. Music plays on the account's devices, not on the screen.
@@ -1529,6 +1466,57 @@ async function spotify(request, env, url) {
   }
 }
 
+// Access's signing keys, cached per isolate. A token signed with an unknown key id fetches them again.
+let accessCerts = { team: '', at: 0, keys: new Map() };
+
+function b64urlBytes(s) {
+  const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4));
+  return Uint8Array.from(bin, (c) => c.charCodeAt(0));
+}
+
+function accessTeam(env) {
+  const team = String(env.ACCESS_TEAM_DOMAIN || '').replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+  return team.includes('.') ? team : team + '.cloudflareaccess.com';
+}
+
+async function accessKey(team, kid) {
+  const fresh = accessCerts.team === team && Date.now() - accessCerts.at < 60 * 60 * 1000;
+  if (fresh && accessCerts.keys.has(kid)) return accessCerts.keys.get(kid);
+  if (fresh && Date.now() - accessCerts.at < 60 * 1000) return null; // don't refetch for every bad token
+  const res = await fetch('https://' + team + '/cdn-cgi/access/certs');
+  if (!res.ok) return null;
+  const keys = new Map();
+  for (const jwk of (await res.json()).keys || []) {
+    if (jwk.kty !== 'RSA' || !jwk.kid) continue;
+    keys.set(jwk.kid, await crypto.subtle.importKey('jwk', jwk, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['verify']));
+  }
+  accessCerts = { team, at: Date.now(), keys };
+  return keys.get(kid) || null;
+}
+
+// True when Access signed this request in: a valid RS256 token for this application.
+async function validAccess(request, env) {
+  const jwt = request.headers.get('Cf-Access-Jwt-Assertion') || '';
+  const parts = jwt.split('.');
+  if (parts.length !== 3) return false;
+  try {
+    const header = JSON.parse(new TextDecoder().decode(b64urlBytes(parts[0])));
+    const claims = JSON.parse(new TextDecoder().decode(b64urlBytes(parts[1])));
+    const team = accessTeam(env);
+    const now = Date.now() / 1000;
+    const aud = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
+    if (header.alg !== 'RS256' || claims.iss !== 'https://' + team || !aud.includes(env.ACCESS_AUD)) return false;
+    if (!(claims.exp > now) || (claims.nbf && claims.nbf > now + 60)) return false;
+    const key = await accessKey(team, header.kid);
+    if (!key) return false;
+    return await crypto.subtle.verify('RSASSA-PKCS1-v1_5', key, b64urlBytes(parts[2]),
+      new TextEncoder().encode(parts[0] + '.' + parts[1]));
+  } catch (err) {
+    console.error('access', err.message);
+    return false;
+  }
+}
+
 function cookieValue(request) {
   const header = request.headers.get('Cookie') || '';
   for (const part of header.split(';')) {
@@ -1546,59 +1534,6 @@ function isIos(request) {
   return /iPhone|iPad|iPod/.test(request.headers.get('User-Agent') || '');
 }
 
-// Runs before the app script. Same-origin fetches and pictures keep the phone link, so the
-// bookmark works even when Safari will not keep the cookie. The link is hex, so it needs no
-// further escaping inside this script.
-function phoneBoot(token) {
-  return '<script>(function(){var t=' + JSON.stringify(token) + ';' +
-    'function add(u){if(typeof u!=="string"||u.indexOf("data:")===0||u.indexOf("blob:")===0)return u;' +
-    'try{var x=new URL(u,location.origin);if(x.origin!==location.origin||(x.protocol!=="https:"&&x.protocol!=="http:"))return u;' +
-    'if(!x.searchParams.get("phone"))x.searchParams.set("phone",t);var next=x.pathname+x.search+x.hash;' +
-    'return /^https?:/i.test(u)?x.origin+next:next;}catch(e){return u;}}' +
-    'var f=window.fetch;window.fetch=function(i,n){if(typeof i==="string")return f.call(this,add(i),n);' +
-    'if(typeof Request!=="undefined"&&i instanceof Request)return f.call(this,new Request(add(i.url),i));' +
-    'return f.call(this,i,n);};' +
-    'try{var d=Object.getOwnPropertyDescriptor(HTMLImageElement.prototype,"src");' +
-    'if(d&&d.set&&d.get)Object.defineProperty(HTMLImageElement.prototype,"src",{configurable:true,' +
-    'set:function(v){d.set.call(this,add(String(v)));},get:function(){return d.get.call(this);}});}catch(e){}})();</script>';
-}
-
-function withPhoneLinks(html, token) {
-  html = html.replace('<head>', '<head>' + phoneBoot(token));
-  return html.replace(/\s(href|src)="([^"]+)"/g, (full, attr, u) => {
-    if (/^(https?:)?\/\//i.test(u) || u.startsWith('data:') || u.startsWith('blob:') || u.startsWith('#')) return full;
-    const cut = u.split('#');
-    const parts = cut[0].split('?');
-    const params = new URLSearchParams(parts[1] || '');
-    if (!params.get('phone')) params.set('phone', token);
-    return ' ' + attr + '="' + parts[0] + '?' + params.toString() + (cut[1] ? '#' + cut[1] : '') + '"';
-  });
-}
-
-function phoneManifest(token) {
-  const q = '?phone=' + token;
-  return Response.json({
-    name: 'Home HQ',
-    short_name: 'Home HQ',
-    start_url: '/' + q,
-    scope: '/',
-    display: 'fullscreen',
-    orientation: 'any',
-    background_color: '#F2EEE6',
-    theme_color: '#F2EEE6',
-    icons: [
-      { src: '/icon-192.png' + q, sizes: '192x192', type: 'image/png', purpose: 'any' },
-      { src: '/icon-512.png' + q, sizes: '512x512', type: 'image/png', purpose: 'any' },
-    ],
-  }, {
-    headers: {
-      'Content-Type': 'application/manifest+json; charset=utf-8',
-      'Cache-Control': 'private, no-store',
-      'X-Robots-Tag': 'noindex',
-    },
-  });
-}
-
 function signed(response, dashKey, opts) {
   const headers = new Headers(response.headers);
   headers.append('Set-Cookie', cookieHeader(dashKey));
@@ -1608,22 +1543,18 @@ function signed(response, dashKey, opts) {
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
-export { sanitizeHueLights, applyHueCommands, hueDashCommand, sanitizeNeoZones, applyNeoCommands, neoDashCommand, sanitizeRingDevices, ringJpegBytes, phoneQrSvg };
+export { sanitizeHueLights, applyHueCommands, hueDashCommand, sanitizeNeoZones, applyNeoCommands, neoDashCommand, sanitizeRingDevices, ringJpegBytes };
 
 export default {
   async fetch(request, env) {
     if (!env.DASH_KEY) return new Response('DASH_KEY not configured', { status: 500 });
 
     const url = new URL(request.url);
-    const key = url.searchParams.get('key');
-    const phoneParam = url.searchParams.get('phone');
-    let viaPhone = false;
+    const access = !!env.ACCESS_AUD;
+    const key = access ? null : url.searchParams.get('key');
 
-    if (phoneParam !== null) {
-      if (!validPhoneLink(phoneParam)) return new Response('Not found', { status: 404 });
-      const stored = await storedPhoneLink(env);
-      if (!(await same(phoneParam, stored))) return new Response('Not found', { status: 404 });
-      viaPhone = true;
+    if (access) {
+      if (!(await validAccess(request, env))) return new Response('Not found', { status: 404 });
     } else if (key !== null) {
       if (!(await same(key, env.DASH_KEY))) return new Response('Not found', { status: 404 });
       // The frame's WebView keeps a cookie set on this redirect. Safari, opened from the
@@ -1666,27 +1597,17 @@ export default {
     if (url.pathname === '/api/ring/snapshot') return ringSnapshot(request, env, url);
     if (url.pathname === '/api/ring/bridge') return ringBridge(request, env);
     if (url.pathname === '/api/ring') return ring(request, env);
-    if (url.pathname === '/api/phone') return phone(request, env);
-    if (viaPhone && url.pathname === '/manifest.webmanifest') return signed(phoneManifest(phoneParam), env.DASH_KEY, {});
     if (url.pathname === '/api/spotify' || url.pathname.startsWith('/api/spotify/')) return spotify(request, env, url);
 
     // The sign-in link is a query on the page address. Asset names are the path alone.
     const assetUrl = new URL(request.url);
     assetUrl.search = '';
     const res = await env.ASSETS.fetch(new Request(assetUrl, request));
-    const type = res.headers.get('content-type') || '';
-    // Read the HTML before wrapping it. The asset body can only be used once.
-    const page = viaPhone && res.ok && type.includes('text/html')
-      ? new Response(withPhoneLinks(await res.text(), phoneParam), {
-        status: res.status,
-        headers: { 'Content-Type': 'text/html; charset=utf-8' },
-      })
-      : res;
     // Hashed files (Vite's /assets/*, scripts/build-photos.mjs's /photos/<hash>.jpg) never change
     // under the same name, so the tablet may keep them; this saves most requests from the slideshow.
     const immutable = /^\/(assets\/|photos\/[0-9a-f]+\.jpg$)/.test(url.pathname);
-    if (viaPhone || (key !== null && isIos(request))) return signed(page, env.DASH_KEY, { immutable: immutable && res.ok });
-    const out = new Response(page.body, page);
+    if (key !== null && isIos(request)) return signed(res, env.DASH_KEY, { immutable: immutable && res.ok });
+    const out = new Response(res.body, res);
     out.headers.set('Cache-Control', immutable && res.ok ? 'private, max-age=31536000, immutable' : 'private, no-store');
     out.headers.set('X-Robots-Tag', 'noindex');
     return out;

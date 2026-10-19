@@ -3,6 +3,8 @@
   "name": "home-dashboard",
   "main": "src/worker.js",
   "compatibility_date": "2026-09-30",
+  // No per-version preview addresses: each would be another way in, outside Cloudflare Access.
+  "preview_urls": false,
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",

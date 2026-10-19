@@ -20,9 +20,21 @@ rm -rf build && mkdir -p build/gen build/classes
 URL=$(node -p "try { require('../local.config.json').url || '' } catch { '' }" 2>/dev/null || true)
 URL=${URL:-https://home-dashboard.wesbos.workers.dev/}
 if [ -f ../.dash-key ]; then URL="$URL?key=$(tr -d '\n' < ../.dash-key)"; fi
+# Cloudflare Access service token from ../.access-token (gitignored), JSON:
+#   { "clientId": "....access", "clientSecret": "..." }
+# Without the file the kiosk sends no Access headers.
+ACCESS=$(node -e "
+  const fs = require('fs');
+  if (!fs.existsSync('../.access-token')) { console.log(' '); process.exit(0); }
+  const t = JSON.parse(fs.readFileSync('../.access-token', 'utf8'));
+  const ok = (v) => typeof v === 'string' && /^[A-Za-z0-9._-]+\$/.test(v);
+  if (!ok(t.clientId) || !ok(t.clientSecret)) { console.error('.access-token: clientId and clientSecret needed'); process.exit(1); }
+  console.log(t.clientId + ' ' + t.clientSecret);
+")
+read -r ACCESS_ID ACCESS_SECRET <<< "$ACCESS" || true
 mkdir -p build/gen/com/wesbos/homehq
-printf 'package com.wesbos.homehq;\n\nfinal class Config {\n  static final String DEFAULT_URL = "%s";\n}\n' "$URL" \
-  > build/gen/com/wesbos/homehq/Config.java
+printf 'package com.wesbos.homehq;\n\nfinal class Config {\n  static final String DEFAULT_URL = "%s";\n  static final String ACCESS_ID = "%s";\n  static final String ACCESS_SECRET = "%s";\n}\n' \
+  "$URL" "${ACCESS_ID:-}" "${ACCESS_SECRET:-}" > build/gen/com/wesbos/homehq/Config.java
 
 "$BT/aapt2" compile --dir res -o build/res.zip
 "$BT/aapt2" link -o build/base.apk -I "$JAR" --manifest AndroidManifest.xml build/res.zip \
