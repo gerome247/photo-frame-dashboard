@@ -78,9 +78,39 @@
     html += V.sp && V.sp.configured
       ? '<button class="sum" data-sum="media"><span class="label">Spotify</span><b class="num">' + (V.sp.active ? (V.sp.playing ? 'Playing' : 'Paused') : 'Off') + '</b><small>' + App.esc(V.sp.active ? V.sp.device : 'Nothing playing') + '</small></button>'
       : '<button class="sum" data-sum="media"><span class="label">Media</span><b class="num">' + (m.playing ? 'Playing' : 'Paused') + '</b><small>' + m.room + ' speaker</small></button>';
+    html += piholeSummary();
     return html;
   }
   function unique(a) { return a.filter(function (x, i) { return a.indexOf(x) === i; }); }
+
+  // ------------------------------------------------------------ Pi-hole (read only, /api/pihole via js/live.js)
+  function piNum(n) { return n == null ? '–' : Number(n).toLocaleString('en-GB'); }
+  function piholeSummary() {
+    var p = D.pihole;
+    if (!p || !p.configured) return '';
+    var head = '<span class="label">Pi-hole</span>';
+    if (p.stale) return '<button class="sum sum--warn" data-sum="pihole">' + head + '<b class="num">–</b><small>Not reporting</small></button>';
+    if (p.blocking === 'disabled') return '<button class="sum sum--warn" data-sum="pihole">' + head + '<b class="num">Off</b><small>Blocking paused</small></button>';
+    return '<button class="sum" data-sum="pihole">' + head + '<b class="num">' + piNum(p.blocked) + '</b><small>blocked · ' +
+      (p.percent == null ? '' : String(p.percent).replace('.0', '') + '% of ') + piNum(p.queries) + '</small></button>';
+  }
+  function piholeDetails() {
+    var p = D.pihole;
+    if (!p || !p.configured) return;
+    if (p.stale) return App.toast('Pi-hole hasn’t reported for over 10 minutes', { icon: 'shield', ms: 5000 });
+    App.toast('Last 24 h: ' + piNum(p.blocked) + ' of ' + piNum(p.queries) + ' lookups blocked' +
+      (p.clients != null ? ' · ' + p.clients + ' devices' : '') + (p.domains != null ? ' · ' + piNum(p.domains) + ' domains on the list' : ''),
+      { icon: 'shield', ms: 6000 });
+  }
+  // The summary row is 3, 4 or 5 across, depending on which tiles there are.
+  function paintSum() {
+    if (!V.el) return;
+    var sum = V.el.querySelector('.hc-sum');
+    sum.innerHTML = summary();
+    var n = sum.children.length;
+    sum.classList.toggle('hc-sum--3', n <= 3);
+    sum.classList.toggle('hc-sum--5', n >= 5);
+  }
 
   function scenes() {
     // The scene buttons drive Wes's demo bulbs. Real Hue lights have their own tiles.
@@ -319,7 +349,7 @@
     Object.keys(pending).forEach(function (id) {
       if (V.neoTimers && V.neoTimers[id]) V.neoTarget[id] = pending[id];
     });
-    if (V.el && App.current === 'control') { neoPaint(); paintPart('.hc-sum', summary()); }
+    if (V.el && App.current === 'control') { neoPaint(); paintSum(); }
     App.emit('live', 'neo');
     return !!state.configured;
   }
@@ -364,7 +394,7 @@
     if (z.offline) return App.toast(App.esc(z.name) + ' is offline', { icon: 'thermo', ms: 3000 });
     z.frost = !z.frost;
     neoPaint();
-    paintPart('.hc-sum', summary());
+    paintSum();
     neoSend({ action: 'frost', id: id, on: z.frost });
   }
   function neoPoll() {
@@ -414,7 +444,7 @@
   function spotifyShow(state) {
     if (!state) return;
     V.sp = state;
-    if (V.el && App.current === 'control') { paintPart('.hc-media', media()); paintPart('.hc-sum', summary()); }
+    if (V.el && App.current === 'control') { paintPart('.hc-media', media()); paintSum(); }
   }
   function spotifyFetch() {
     return fetch('/api/spotify', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(spotifyShow).catch(function () {});
@@ -459,16 +489,14 @@
   function paintPart(sel, html) { if (V.el) V.el.querySelector(sel).innerHTML = html; }
   function changed(ids) {
     ids.forEach(paintTile);
-    paintPart('.hc-sum', summary());
+    paintSum();
     App.emit('data');
   }
 
   function paint() {
     if (!V.el) return;
     var el = V.el;
-    var sum = el.querySelector('.hc-sum');
-    sum.classList.toggle('hc-sum--3', !dev('g-door'));
-    sum.innerHTML = summary();
+    paintSum();
     var sceneHtml = scenes();
     var scenesEl = el.querySelector('.hc-scenes');
     scenesEl.innerHTML = sceneHtml;
@@ -664,6 +692,7 @@
     if ((t = e.target.closest('[data-sum]'))) {
       var k = t.dataset.sum;
       if (k === 'lights' || k === 'security') return listSheet(k);
+      if (k === 'pihole') return piholeDetails();
       var target = V.el.querySelector(k === 'climate' ? '.hc-climate' : k === 'neo' ? '.hc-neo' : '.hc-media');
       target.classList.add('is-pulse'); setTimeout(function () { target.classList.remove('is-pulse'); }, 900);
       return;
@@ -688,9 +717,9 @@
     if ((t = e.target.closest('[data-spvol]'))) {
       return spotifyCommand({ action: 'volume', volume: Math.max(0, Math.min(100, (V.sp.volume || 0) + +t.dataset.spvol)) });
     }
-    if ((t = e.target.closest('[data-play]'))) { D.media.playing = !D.media.playing; paintPart('.hc-media', media()); paintPart('.hc-sum', summary()); }
+    if ((t = e.target.closest('[data-play]'))) { D.media.playing = !D.media.playing; paintPart('.hc-media', media()); paintSum(); }
   }
-  function climateChanged() { paintPart('.hc-climate', climate()); paintPart('.hc-sum', summary()); App.emit('data'); }
+  function climateChanged() { paintPart('.hc-climate', climate()); paintSum(); App.emit('data'); }
 
   // Spotify is only asked while this view is on screen.
   function spotifyPoll() {
@@ -708,6 +737,7 @@
   }
 
   App.on('live', function (key) {
+    if (key === 'pihole' && V.el && App.current === 'control') paintSum();
     if (window.HUE_SYNC !== false || key !== 'hue') return;
     V.hue = D.hue || { configured: false };
     placeLiveDevices();

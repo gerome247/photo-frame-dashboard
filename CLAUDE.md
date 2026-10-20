@@ -17,14 +17,14 @@ This repo is **public**. Nothing personal goes in a commit.
 
 | Path | What |
 | --- | --- |
-| `dashboard/src/worker.js` | Cloudflare Worker: with `ACCESS_AUD` set, requires a valid Cloudflare Access JWT, else the key gate (`?key=` → HttpOnly cookie); 404 otherwise. In front of everything, plus `/api/data` (weather, iCal), `/api/shopping`, `/api/chores`, `/api/spotify*`, `/api/agents` |
+| `dashboard/src/worker.js` | Cloudflare Worker: with `ACCESS_AUD` set, requires a valid Cloudflare Access JWT, else the key gate (`?key=` → HttpOnly cookie); 404 otherwise. In front of everything, plus `/api/data` (weather, iCal), `/api/shopping`, `/api/chores`, `/api/spotify*`, `/api/agents`, `/api/pihole` (+ `/bridge`, posted by the Pi) |
 | `dashboard/js/` | Dashboard (Vite, plain JS). `main.js` loads data then views; stores: `shopping-store.js`, `chores-store.js`; `print-list.js`; `chore-icons.js` (Lucide) |
 | `dashboard/js/views/` | One file per tab: home (Today), calendar, tasks (Chores), shopping, photos, control (Home), agents, spotify |
 | `dashboard/kiosk/` | Android kiosk app (no Gradle): full-screen WebView, offline screen, controls menu, Home alias, `IppPrinter.java` (network printing) |
-| `dashboard/scripts/` | `deploy.mjs`, `build-photos.mjs`, `spotify-login.mjs`, `agents-push.mjs` |
+| `dashboard/scripts/` | `deploy.mjs`, `build-photos.mjs`, `spotify-login.mjs`, `agents-push.mjs`; LAN bridges `hue-bridge.mjs`, `neohub.mjs`, `ring-bridge.mjs` (laptop) and `pihole-push.sh` (runs on the Pi-hole host, systemd timer) |
 | `dashboard/local.config.example.json` | Template for the private `local.config.json` |
 
-Storage: one D1 database (binding `SHOPPING`, added at deploy time by `deploy.mjs` from `local.config.json` → gitignored `.wrangler.deploy.json`). Tables `shopping`, `chores`, `chore_ticks` (one row per chore, person and day), `kv` (agents numbers, rotated Spotify token). Tables are created on first use.
+Storage: one D1 database (binding `SHOPPING`, added at deploy time by `deploy.mjs` from `local.config.json` → gitignored `.wrangler.deploy.json`). Tables `shopping`, `chores`, `chore_ticks` (one row per chore, person and day), `kv` (agents numbers, rotated Spotify token, bridge state such as `pihole_bridge`). Tables are created on first use.
 
 ## Commands
 

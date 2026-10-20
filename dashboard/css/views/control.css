@@ -5,6 +5,9 @@
 
 .hc-sum { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; flex: none; }
 .hc-sum--3 { grid-template-columns: repeat(3, 1fr); }
+.hc-sum--5 { grid-template-columns: repeat(5, 1fr); gap: 10px; }
+.hc-sum--5 .sum { padding: 14px 12px; }
+.hc-sum--5 .sum b { font-size: 40px; }
 .sum { min-height: 120px; padding: 14px 16px; border-radius: var(--r); background: var(--card); display: flex; flex-direction: column; text-align: left; }
 .sum:active { transform: scale(.97); }
 .sum b { font-size: 48px; line-height: .95; margin-top: 4px; }
@@ -181,7 +184,7 @@
 }
 @media (max-width: 767px) {
   [data-layout="fluid"] .hc { gap: 14px; }
-  [data-layout="fluid"] .hc-sum, [data-layout="fluid"] .hc-sum--3 { grid-template-columns: 1fr 1fr; gap: 10px; }
+  [data-layout="fluid"] .hc-sum, [data-layout="fluid"] .hc-sum--3, [data-layout="fluid"] .hc-sum--5 { grid-template-columns: 1fr 1fr; gap: 10px; }
   [data-layout="fluid"] .sum { min-height: 96px; padding: 12px 14px; }
   [data-layout="fluid"] .sum b { font-size: 36px; }
   [data-layout="fluid"] .hc-scenes { flex-wrap: wrap; gap: 8px; }

@@ -1014,6 +1014,61 @@ async function neohubBridge(request, env) {
   }
 }
 
+// ------------------------------------------------------------ Pi-hole
+// The Worker cannot reach the Pi on the home LAN. scripts/pihole-push.sh runs on the Pi next to
+// Pi-hole and posts its figures (Pi-hole's last 24 hours) here every minute. Read only.
+//   GET  /api/pihole                 -> { configured, queries, blocked, percent, clients, domains, blocking, updated, stale }
+//   POST /api/pihole/bridge { state } -> { ok } for the Pi script only
+const PIHOLE_STALE_MS = 10 * 60 * 1000;
+
+function piCount(v) {
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 && n < 1e10 ? Math.round(n) : null;
+}
+
+function sanitizePihole(s) {
+  if (!s || typeof s !== 'object') return null;
+  const queries = piCount(s.queries);
+  const blocked = piCount(s.blocked);
+  if (queries == null || blocked == null) return null;
+  const percent = Number(s.percent);
+  return {
+    queries,
+    blocked,
+    percent: Number.isFinite(percent) && percent >= 0 && percent <= 100 ? Math.round(percent * 10) / 10 : null,
+    clients: piCount(s.clients),
+    domains: piCount(s.domains),
+    blocking: s.blocking === 'enabled' || s.blocking === 'disabled' ? s.blocking : 'unknown',
+  };
+}
+
+function piJson(v, status) {
+  return Response.json(v, { status: status || 200, headers: { 'Cache-Control': 'private, no-store' } });
+}
+
+async function pihole(request, env) {
+  if (request.method !== 'GET') return new Response('Method not allowed', { status: 405 });
+  if (!env.SHOPPING) return piJson({ configured: false });
+  const raw = await kvGet(env.SHOPPING, 'pihole_bridge');
+  let doc = null;
+  try { doc = raw ? JSON.parse(raw) : null; } catch { /* treated as not configured */ }
+  if (!doc || typeof doc.updated !== 'number') return piJson({ configured: false });
+  return piJson({ configured: true, ...doc, stale: Date.now() - doc.updated > PIHOLE_STALE_MS });
+}
+
+async function piholeBridge(request, env) {
+  if (request.method !== 'POST') return new Response('Method not allowed', { status: 405 });
+  if (!env.SHOPPING) return piJson({ error: 'no database' }, 503);
+  const body = await request.text();
+  if (body.length > 5000) return piJson({ error: 'too big' }, 413);
+  let d;
+  try { d = JSON.parse(body); } catch { return piJson({ error: 'bad JSON' }, 400); }
+  const state = sanitizePihole(d && d.state);
+  if (!state) return piJson({ error: 'bad state' }, 400);
+  await kvPut(env.SHOPPING, 'pihole_bridge', JSON.stringify({ ...state, updated: Date.now() }));
+  return piJson({ ok: true });
+}
+
 // ------------------------------------------------------------ Ring doorbell
 // The frame cannot call Ring (old trust store, no WebRTC). scripts/ring-bridge.mjs on the PC
 // holds the refresh token and posts camera state here. Pictures are JPEGs in D1, served from
@@ -1543,7 +1598,7 @@ function signed(response, dashKey, opts) {
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
-export { sanitizeHueLights, applyHueCommands, hueDashCommand, sanitizeNeoZones, applyNeoCommands, neoDashCommand, sanitizeRingDevices, ringJpegBytes };
+export { sanitizeHueLights, applyHueCommands, hueDashCommand, sanitizeNeoZones, applyNeoCommands, neoDashCommand, sanitizeRingDevices, ringJpegBytes, sanitizePihole };
 
 export default {
   async fetch(request, env) {
@@ -1594,6 +1649,8 @@ export default {
     if (url.pathname === '/api/hue') return hue(request, env);
     if (url.pathname === '/api/neohub/bridge') return neohubBridge(request, env);
     if (url.pathname === '/api/neohub') return neohub(request, env);
+    if (url.pathname === '/api/pihole/bridge') return piholeBridge(request, env);
+    if (url.pathname === '/api/pihole') return pihole(request, env);
     if (url.pathname === '/api/ring/snapshot') return ringSnapshot(request, env, url);
     if (url.pathname === '/api/ring/bridge') return ringBridge(request, env);
     if (url.pathname === '/api/ring') return ring(request, env);

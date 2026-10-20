@@ -1,11 +1,11 @@
-// Shared live state for the Today screen: Hive, Hue, Heatmiser underfloor and Spotify.
-// Kept in DATA.hive / DATA.hue / DATA.neo / DATA.nowPlaying. Emits 'live' when one changes.
+// Shared live state for the Today screen: Hive, Hue, Heatmiser underfloor, Pi-hole and Spotify.
+// Kept in DATA.hive / DATA.hue / DATA.neo / DATA.pihole / DATA.nowPlaying. Emits 'live' when one changes.
 // The Home and Spotify tabs still poll faster while they're open.
 // Hue sync is on. scripts/hue-bridge.mjs posts about every 30 seconds. Set this false,
 // and HUE_SYNC false in src/worker.js, to pause it again.
 window.HUE_SYNC = true;
 var D = window.DATA;
-var HIVE_MS = 2 * 60 * 1000, HUE_MS = 2 * 60 * 1000, NEO_MS = 2 * 60 * 1000, SPOTIFY_MS = 30 * 1000;
+var HIVE_MS = 2 * 60 * 1000, HUE_MS = 2 * 60 * 1000, NEO_MS = 2 * 60 * 1000, PIHOLE_MS = 2 * 60 * 1000, SPOTIFY_MS = 30 * 1000;
 
 function get(path) {
   return fetch(path, { cache: 'no-store' }).then(function (r) { return r.json(); });
@@ -38,6 +38,11 @@ function neo() {
   }).catch(function () { if (!D.neo) update('neo', { configured: false }); });
 }
 
+function pihole() {
+  return get('/api/pihole').then(function (s) { update('pihole', s); })
+    .catch(function () { if (!D.pihole) update('pihole', { configured: false }); });
+}
+
 function spotify() {
   return get('/api/spotify').then(function (s) {
     update('nowPlaying', s.configured && s.active ? { playing: s.playing, title: s.title, artist: s.artist, device: s.device } : null);
@@ -46,6 +51,7 @@ function spotify() {
 
 hive();
 neo();
+pihole();
 spotify();
 if (window.HUE_SYNC) {
   hue();
@@ -55,4 +61,5 @@ if (window.HUE_SYNC) {
 }
 setInterval(hive, HIVE_MS);
 setInterval(neo, NEO_MS);
+setInterval(pihole, PIHOLE_MS);
 setInterval(spotify, SPOTIFY_MS);
